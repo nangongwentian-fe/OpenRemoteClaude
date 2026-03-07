@@ -88,7 +88,7 @@ export function ThreadSidebar({
                 key={thread.id}
                 onClick={() => onSelectThread(thread.id)}
                 className={cn(
-                  "flex items-start gap-3 rounded-xl px-3 py-3 text-left text-sm transition-all duration-150 cursor-pointer group",
+                  "flex items-start gap-3 rounded-xl px-3 py-3 text-left text-sm transition-all duration-150 cursor-pointer group overflow-hidden",
                   thread.id === activeThreadId
                     ? "bg-primary/10 border border-primary/20"
                     : "hover:bg-(--color-overlay-hover) border border-transparent"
