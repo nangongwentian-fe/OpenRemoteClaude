@@ -3,6 +3,8 @@ import type {
   ConnectionStatus,
   ServerMessage,
   ClientMessage,
+  SessionPreferences,
+  PermissionMode,
 } from "../types/messages";
 
 const MAX_RECONNECT_ATTEMPTS = 10;
@@ -15,8 +17,8 @@ export function useWebSocket(
   const [status, setStatus] = useState<ConnectionStatus>("disconnected");
   const wsRef = useRef<WebSocket | null>(null);
   const reconnectAttempts = useRef(0);
-  const reconnectTimer = useRef<ReturnType<typeof setTimeout>>();
-  const heartbeatTimer = useRef<ReturnType<typeof setInterval>>();
+  const reconnectTimer = useRef<ReturnType<typeof setTimeout>>(undefined);
+  const heartbeatTimer = useRef<ReturnType<typeof setInterval>>(undefined);
   const onMessageRef = useRef(onMessage);
   onMessageRef.current = onMessage;
 
@@ -92,11 +94,44 @@ export function useWebSocket(
   }, [cleanup]);
 
   const sendChat = useCallback(
-    (prompt: string, cwd?: string, resumeSessionId?: string) => {
-      sendRaw({ type: "chat", payload: { prompt, cwd, resumeSessionId } });
+    (
+      prompt: string,
+      cwd?: string,
+      resumeSessionId?: string,
+      options?: SessionPreferences
+    ) => {
+      sendRaw({
+        type: "chat",
+        payload: {
+          prompt,
+          cwd,
+          resumeSessionId,
+          ...(options?.model ? { model: options.model } : {}),
+          ...(options?.effort ? { effort: options.effort } : {}),
+          ...(options?.thinking ? { thinking: options.thinking } : {}),
+        },
+      });
     },
     [sendRaw]
   );
+
+  const setModel = useCallback(
+    (model: string) => {
+      sendRaw({ type: "set_model", payload: { model } });
+    },
+    [sendRaw]
+  );
+
+  const setPermissionMode = useCallback(
+    (mode: PermissionMode) => {
+      sendRaw({ type: "set_permission_mode", payload: { mode } });
+    },
+    [sendRaw]
+  );
+
+  const requestCapabilities = useCallback(() => {
+    sendRaw({ type: "request_capabilities" });
+  }, [sendRaw]);
 
   const interrupt = useCallback(() => {
     sendRaw({ type: "interrupt" });
@@ -116,5 +151,15 @@ export function useWebSocket(
     };
   }, [token, connect, disconnect]);
 
-  return { status, sendChat, interrupt, abort, disconnect };
+  return {
+    status,
+    sendChat,
+    interrupt,
+    abort,
+    disconnect,
+    setModel,
+    setPermissionMode,
+    requestCapabilities,
+    sendRaw,
+  };
 }

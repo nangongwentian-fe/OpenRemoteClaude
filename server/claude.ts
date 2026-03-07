@@ -10,6 +10,12 @@ export interface SessionInfo {
 
 export type MessageCallback = (msg: unknown) => void;
 
+export interface SessionOptions {
+  model?: string;
+  effort?: "low" | "medium" | "high" | "max";
+  thinking?: { type: "adaptive" } | { type: "enabled"; budgetTokens?: number } | { type: "disabled" };
+}
+
 export class ClaudeSessionManager {
   private sessions = new Map<string, SessionInfo>();
 
@@ -19,7 +25,8 @@ export class ClaudeSessionManager {
     onMessage: MessageCallback,
     onComplete: () => void,
     onError: (err: Error) => void,
-    resumeSessionId?: string
+    resumeSessionId?: string,
+    options?: SessionOptions
   ): Promise<string> {
     const sessionId = resumeSessionId || crypto.randomUUID();
     const abortController = new AbortController();
@@ -39,6 +46,9 @@ export class ClaudeSessionManager {
         cwd,
         abortController,
         ...(resumeSessionId ? { resume: resumeSessionId } : {}),
+        ...(options?.model ? { model: options.model } : {}),
+        ...(options?.effort ? { effort: options.effort } : {}),
+        ...(options?.thinking ? { thinking: options.thinking } : {}),
         allowedTools: [
           "Read",
           "Edit",
@@ -77,6 +87,36 @@ export class ClaudeSessionManager {
     })();
 
     return sessionId;
+  }
+
+  async getCapabilities(sessionId: string) {
+    const session = this.sessions.get(sessionId);
+    if (!session?.queryHandle) return null;
+
+    try {
+      const [models, commands, mcpStatus] = await Promise.all([
+        session.queryHandle.supportedModels(),
+        session.queryHandle.supportedCommands(),
+        session.queryHandle.mcpServerStatus(),
+      ]);
+      return { models, commands, mcpServers: mcpStatus };
+    } catch {
+      return null;
+    }
+  }
+
+  async setModel(sessionId: string, model: string) {
+    const session = this.sessions.get(sessionId);
+    if (session?.queryHandle) {
+      await session.queryHandle.setModel(model);
+    }
+  }
+
+  async setPermissionMode(sessionId: string, mode: string) {
+    const session = this.sessions.get(sessionId);
+    if (session?.queryHandle) {
+      await session.queryHandle.setPermissionMode(mode as "default" | "acceptEdits" | "plan" | "dontAsk");
+    }
   }
 
   async interruptSession(sessionId: string) {

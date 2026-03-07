@@ -1,12 +1,67 @@
 // WebSocket 协议消息类型
 
+// SDK 能力类型
+export type EffortLevel = "low" | "medium" | "high" | "max";
+export type ThinkingMode = "adaptive" | "enabled" | "disabled";
+export type PermissionMode = "default" | "acceptEdits" | "plan" | "dontAsk";
+
+export interface ModelInfo {
+  value: string;
+  displayName: string;
+  description?: string;
+  supportsEffort?: boolean;
+  supportedEffortLevels?: EffortLevel[];
+  supportsAdaptiveThinking?: boolean;
+  supportsFastMode?: boolean;
+}
+
+export interface McpServerInfo {
+  name: string;
+  status: string;
+}
+
+export interface SlashCommandInfo {
+  name: string;
+  description?: string;
+}
+
+export interface SessionPreferences {
+  model?: string;
+  effort?: EffortLevel;
+  thinking?: ThinkingMode;
+}
+
+export interface Attachment {
+  id: string;
+  file: File;
+  name: string;
+  type: string;
+  size: number;
+  preview?: string;
+  uploadStatus: "pending" | "uploading" | "done" | "error";
+  serverPath?: string;
+}
+
 // 客户端 → 服务端
 export type ClientMessage =
   | { type: "auth"; token: string }
-  | { type: "chat"; payload: { prompt: string; cwd?: string; resumeSessionId?: string } }
+  | {
+      type: "chat";
+      payload: {
+        prompt: string;
+        cwd?: string;
+        resumeSessionId?: string;
+        model?: string;
+        effort?: EffortLevel;
+        thinking?: ThinkingMode;
+      };
+    }
   | { type: "interrupt" }
   | { type: "abort" }
-  | { type: "ping" };
+  | { type: "ping" }
+  | { type: "set_model"; payload: { model: string } }
+  | { type: "set_permission_mode"; payload: { mode: PermissionMode } }
+  | { type: "request_capabilities" };
 
 // 服务端 → 客户端
 export type ServerMessage =
@@ -41,7 +96,27 @@ export type ServerMessage =
         numTurns: number;
       };
     }
-  | { type: "system_init"; payload: { sessionId: string; tools: string[] } }
+  | {
+      type: "system_init";
+      payload: {
+        sessionId: string;
+        tools: string[];
+        model?: string;
+        permissionMode?: PermissionMode;
+        mcpServers?: McpServerInfo[];
+        slashCommands?: string[];
+      };
+    }
+  | {
+      type: "capabilities";
+      payload: {
+        models: ModelInfo[];
+        commands: SlashCommandInfo[];
+        mcpServers: McpServerInfo[];
+      };
+    }
+  | { type: "model_changed"; payload: { model: string } }
+  | { type: "permission_mode_changed"; payload: { mode: PermissionMode } }
   | { type: "chat_complete"; payload: { sessionId: string } }
   | { type: "interrupted"; payload: Record<string, never> }
   | { type: "aborted"; payload: Record<string, never> }

@@ -12,7 +12,7 @@ import {
 import { MessageList } from "../components/MessageList";
 import { InputBar } from "../components/InputBar";
 import { ThreadSidebar } from "../components/ThreadSidebar";
-import type { ConnectionStatus, ChatMessage, Thread } from "../types/messages";
+import type { ConnectionStatus, ChatMessage, Thread, ModelInfo, McpServerInfo, SlashCommandInfo, SessionPreferences, Attachment } from "../types/messages";
 import type { Theme } from "../hooks/useTheme";
 
 interface Props {
@@ -30,6 +30,18 @@ interface Props {
   onSwitchThread: (threadId: string) => void;
   onNewThread: () => void;
   onLogout: () => void;
+  // 能力与偏好
+  preferences: SessionPreferences;
+  onUpdatePreference: <K extends keyof SessionPreferences>(key: K, value: SessionPreferences[K]) => void;
+  models: ModelInfo[];
+  commands: SlashCommandInfo[];
+  mcpServers: McpServerInfo[];
+  currentModel: string;
+  onSetModel: (model: string) => void;
+  // 附件
+  attachments: Attachment[];
+  onAddAttachments: (files: FileList) => void;
+  onRemoveAttachment: (id: string) => void;
 }
 
 export function Chat({
@@ -47,6 +59,16 @@ export function Chat({
   onSwitchThread,
   onNewThread,
   onLogout,
+  preferences,
+  onUpdatePreference,
+  models,
+  commands,
+  mcpServers,
+  currentModel,
+  onSetModel,
+  attachments,
+  onAddAttachments,
+  onRemoveAttachment,
 }: Props) {
   const bottomRef = useRef<HTMLDivElement>(null);
 
@@ -172,6 +194,16 @@ export function Chat({
         onInterrupt={onInterrupt}
         isProcessing={isProcessing}
         disabled={status !== "authenticated"}
+        preferences={preferences}
+        onUpdatePreference={onUpdatePreference}
+        models={models}
+        commands={commands}
+        mcpServers={mcpServers}
+        currentModel={currentModel}
+        onSetModel={onSetModel}
+        attachments={attachments}
+        onAddAttachments={onAddAttachments}
+        onRemoveAttachment={onRemoveAttachment}
       />
     </div>
   );

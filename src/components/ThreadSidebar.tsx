@@ -53,7 +53,7 @@ export function ThreadSidebar({
           </div>
         </SheetHeader>
 
-        <div className="px-3 pb-3">
+        <div className="px-4 pb-3">
           <Button
             variant="outline"
             className="w-full justify-start gap-2.5 h-10 rounded-xl border-dashed border-(--color-overlay-border) bg-(--color-overlay) hover:bg-(--color-overlay-hover) hover:border-border transition-all"
@@ -69,7 +69,7 @@ export function ThreadSidebar({
         <Separator className="bg-(--color-overlay-border)" />
 
         <ScrollArea className="flex-1 h-[calc(100vh-160px)]">
-          <div className="flex flex-col gap-1 p-2">
+          <div className="flex flex-col gap-1 px-3 py-2">
             {loading && threads.length === 0 && (
               <div className="flex flex-col gap-2 px-2 py-4">
                 {[1, 2, 3].map((i) => (

@@ -75,11 +75,13 @@
   --color-code-border: rgba(255, 255, 255, 0.06);
 }
 
-* {
-  margin: 0;
-  padding: 0;
-  box-sizing: border-box;
-  border-color: var(--color-border);
+@layer base {
+  * {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+    border-color: var(--color-border);
+  }
 }
 
 html, body, #root {
@@ -117,4 +119,17 @@ html, body, #root {
   animation: blink 0.8s ease-in-out infinite;
   vertical-align: text-bottom;
   border-radius: 1px;
+}
+
+/* InputBar: CSS native textarea auto-resize (Chrome 123+, Firefox 133+) */
+.field-sizing-content {
+  field-sizing: content;
+}
+
+@keyframes scale-in {
+  from { transform: scale(0.8); opacity: 0; }
+  to { transform: scale(1); opacity: 1; }
+}
+.animate-scale-in {
+  animation: scale-in 0.15s ease-out;
 }

@@ -4,6 +4,9 @@ import { useWebSocket } from "./hooks/useWebSocket";
 import { useMessages } from "./hooks/useMessages";
 import { useThreads } from "./hooks/useThreads";
 import { useTheme } from "./hooks/useTheme";
+import { usePreferences } from "./hooks/usePreferences";
+import { useCapabilities } from "./hooks/useCapabilities";
+import { useAttachments } from "./hooks/useAttachments";
 import { Login } from "./pages/Login";
 import { Chat } from "./pages/Chat";
 import type { ServerMessage } from "./types/messages";
@@ -11,6 +14,9 @@ import type { ServerMessage } from "./types/messages";
 export default function App() {
   const { theme, resolved, setTheme } = useTheme();
   const auth = useAuth();
+  const { preferences, updatePreference } = usePreferences();
+  const capabilities = useCapabilities();
+  const attachments = useAttachments();
   const {
     messages,
     isProcessing,
@@ -40,8 +46,20 @@ export default function App() {
       if (msg.type === "chat_complete" || msg.type === "result") {
         fetchThreadsRef.current();
       }
+      if (msg.type === "system_init") {
+        capabilities.handleSystemInit(msg.payload);
+      }
+      if (msg.type === "capabilities") {
+        capabilities.handleCapabilities(msg.payload);
+      }
+      if (msg.type === "model_changed") {
+        capabilities.setCurrentModel(msg.payload.model);
+      }
+      if (msg.type === "permission_mode_changed") {
+        capabilities.setCurrentPermissionMode(msg.payload.mode);
+      }
     },
-    [handleServerMessage]
+    [handleServerMessage, capabilities]
   );
 
   const ws = useWebSocket(auth.token, wrappedHandler);
@@ -68,9 +86,19 @@ export default function App() {
     );
   }
 
-  const handleSend = (prompt: string) => {
+  const handleSend = async (prompt: string) => {
+    // 上传附件
+    let finalPrompt = prompt;
+    if (attachments.attachments.length > 0) {
+      const filePaths = await attachments.uploadAll(auth.token!);
+      if (filePaths.length > 0) {
+        finalPrompt = `${prompt}\n\n[Attached files:\n${filePaths.map((p) => `- ${p}`).join("\n")}\n]`;
+      }
+      attachments.clear();
+    }
+
     addUserMessage(prompt);
-    ws.sendChat(prompt, undefined, activeThreadId || undefined);
+    ws.sendChat(finalPrompt, undefined, activeThreadId || undefined, preferences);
   };
 
   const handleSwitchThread = async (threadId: string) => {
@@ -102,6 +130,16 @@ export default function App() {
         ws.disconnect();
         auth.logout();
       }}
+      preferences={preferences}
+      onUpdatePreference={updatePreference}
+      models={capabilities.models}
+      commands={capabilities.commands}
+      mcpServers={capabilities.mcpServers}
+      currentModel={capabilities.currentModel}
+      onSetModel={ws.setModel}
+      attachments={attachments.attachments}
+      onAddAttachments={attachments.addAttachments}
+      onRemoveAttachment={attachments.removeAttachment}
     />
   );
 }

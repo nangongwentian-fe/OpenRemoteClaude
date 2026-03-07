@@ -7,6 +7,7 @@ import { DataStore } from "./db";
 import { createAuthRoutes } from "./auth";
 import { createWSHandlers, type WSState } from "./ws";
 import { createThreadRoutes } from "./threads";
+import { createUploadRoutes } from "./upload";
 import { launchTunnel, getTunnelInfo, stopTunnel } from "./tunnel";
 
 const PORT = parseInt(process.env.PORT || "3456");
@@ -30,6 +31,9 @@ app.get("/api/tunnel", (c) => c.json(getTunnelInfo()));
 
 // Thread 管理路由（需要 JWT）
 app.route("/api/threads", createThreadRoutes(JWT_SECRET));
+
+// 文件上传路由（需要 JWT）
+app.route("/api", createUploadRoutes(JWT_SECRET));
 
 // WebSocket 路由
 const wsHandlers = createWSHandlers(JWT_SECRET, db);

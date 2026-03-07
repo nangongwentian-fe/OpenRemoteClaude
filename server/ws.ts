@@ -1,5 +1,5 @@
 import { verify } from "hono/jwt";
-import { ClaudeSessionManager } from "./claude";
+import { ClaudeSessionManager, type SessionOptions } from "./claude";
 import { DataStore } from "./db";
 import type { ServerWebSocket } from "bun";
 
@@ -123,16 +123,69 @@ function forwardSDKMessage(ws: ServerWebSocket<WSState>, msg: SDKMessage) {
 
     case "system": {
       if (msg.subtype === "init") {
+        const mcpServers = Array.isArray(msg.mcp_servers)
+          ? (msg.mcp_servers as Array<{ name: string; status: string }>).map((s) => ({
+              name: s.name,
+              status: s.status,
+            }))
+          : [];
+
+        const slashCommands = Array.isArray(msg.slash_commands)
+          ? (msg.slash_commands as string[])
+          : [];
+
         send(ws, {
           type: "system_init",
           payload: {
             sessionId: msg.session_id,
             tools: msg.tools,
+            model: msg.model,
+            permissionMode: msg.permissionMode,
+            mcpServers,
+            slashCommands,
           },
         });
+
+        // 异步获取详细能力信息
+        const sessionId = msg.session_id as string;
+        if (sessionId) {
+          sendCapabilities(ws, sessionId);
+        }
       }
       break;
     }
+  }
+}
+
+async function sendCapabilities(ws: ServerWebSocket<WSState>, sessionId: string) {
+  try {
+    const caps = await sessionManager.getCapabilities(sessionId);
+    if (!caps) return;
+
+    send(ws, {
+      type: "capabilities",
+      payload: {
+        models: (caps.models as Array<Record<string, unknown>>).map((m) => ({
+          value: m.value,
+          displayName: m.displayName,
+          description: m.description,
+          supportsEffort: m.supportsEffort,
+          supportedEffortLevels: m.supportedEffortLevels,
+          supportsAdaptiveThinking: m.supportsAdaptiveThinking,
+          supportsFastMode: m.supportsFastMode,
+        })),
+        commands: (caps.commands as Array<Record<string, unknown>>).map((c) => ({
+          name: c.name ?? c.command ?? c,
+          description: c.description,
+        })),
+        mcpServers: (caps.mcpServers as Array<Record<string, unknown>>).map((s) => ({
+          name: s.name,
+          status: s.status,
+        })),
+      },
+    });
+  } catch {
+    // capabilities 获取失败不影响正常使用
   }
 }
 
@@ -187,6 +240,9 @@ export function createWSHandlers(jwtSecret: string, db: DataStore) {
             prompt: string;
             cwd?: string;
             resumeSessionId?: string;
+            model?: string;
+            effort?: string;
+            thinking?: string;
           };
 
           if (!payload?.prompt) {
@@ -198,6 +254,20 @@ export function createWSHandlers(jwtSecret: string, db: DataStore) {
           }
 
           const cwd = payload.cwd || process.cwd();
+
+          // 构建 SDK 选项
+          const sessionOpts: SessionOptions = {};
+          if (payload.model) sessionOpts.model = payload.model;
+          if (payload.effort) sessionOpts.effort = payload.effort as SessionOptions["effort"];
+          if (payload.thinking) {
+            if (payload.thinking === "disabled") {
+              sessionOpts.thinking = { type: "disabled" };
+            } else if (payload.thinking === "adaptive") {
+              sessionOpts.thinking = { type: "adaptive" };
+            } else if (payload.thinking === "enabled") {
+              sessionOpts.thinking = { type: "enabled" };
+            }
+          }
 
           send(ws, { type: "chat_started", payload: { cwd } });
 
@@ -220,7 +290,8 @@ export function createWSHandlers(jwtSecret: string, db: DataStore) {
                   payload: { message: err.message },
                 });
               },
-              payload.resumeSessionId
+              payload.resumeSessionId,
+              sessionOpts
             );
 
             ws.data.activeSessionId = sessionId;
@@ -238,11 +309,56 @@ export function createWSHandlers(jwtSecret: string, db: DataStore) {
           break;
         }
 
-        case "interrupt": {
+        case "set_model": {
           if (!ws.data.authenticated) return;
           const activeSession = sessionManager.getActiveSession();
           if (activeSession) {
-            await sessionManager.interruptSession(activeSession.id);
+            try {
+              const model = (data.payload as { model: string }).model;
+              await sessionManager.setModel(activeSession.id, model);
+              send(ws, { type: "model_changed", payload: { model } });
+            } catch (err) {
+              send(ws, {
+                type: "error",
+                payload: { message: err instanceof Error ? err.message : "Failed to set model" },
+              });
+            }
+          }
+          break;
+        }
+
+        case "set_permission_mode": {
+          if (!ws.data.authenticated) return;
+          const active = sessionManager.getActiveSession();
+          if (active) {
+            try {
+              const mode = (data.payload as { mode: string }).mode;
+              await sessionManager.setPermissionMode(active.id, mode);
+              send(ws, { type: "permission_mode_changed", payload: { mode } });
+            } catch (err) {
+              send(ws, {
+                type: "error",
+                payload: { message: err instanceof Error ? err.message : "Failed to set permission mode" },
+              });
+            }
+          }
+          break;
+        }
+
+        case "request_capabilities": {
+          if (!ws.data.authenticated) return;
+          const session = sessionManager.getActiveSession();
+          if (session) {
+            await sendCapabilities(ws, session.id);
+          }
+          break;
+        }
+
+        case "interrupt": {
+          if (!ws.data.authenticated) return;
+          const interruptSession = sessionManager.getActiveSession();
+          if (interruptSession) {
+            await sessionManager.interruptSession(interruptSession.id);
             send(ws, { type: "interrupted", payload: {} });
           }
           break;
@@ -250,9 +366,9 @@ export function createWSHandlers(jwtSecret: string, db: DataStore) {
 
         case "abort": {
           if (!ws.data.authenticated) return;
-          const active = sessionManager.getActiveSession();
-          if (active) {
-            sessionManager.abortSession(active.id);
+          const abortSession = sessionManager.getActiveSession();
+          if (abortSession) {
+            sessionManager.abortSession(abortSession.id);
             send(ws, { type: "aborted", payload: {} });
           }
           break;
