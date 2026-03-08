@@ -13,7 +13,8 @@ export function createThreadRoutes(jwtSecret: string) {
   // GET /api/threads — thread 列表
   threads.get("/", async (c) => {
     const limit = parseInt(c.req.query("limit") || "30");
-    const sessions = await listSessions({ limit });
+    const dir = c.req.query("dir");
+    const sessions = await listSessions({ limit, ...(dir ? { dir } : {}) });
 
     return c.json({
       threads: sessions.map((s) => ({

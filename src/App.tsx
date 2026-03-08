@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useAuth } from "./hooks/useAuth";
 import { useWebSocket } from "./hooks/useWebSocket";
 import { useMessages } from "./hooks/useMessages";
@@ -7,9 +7,11 @@ import { useTheme } from "./hooks/useTheme";
 import { usePreferences } from "./hooks/usePreferences";
 import { useCapabilities } from "./hooks/useCapabilities";
 import { useAttachments } from "./hooks/useAttachments";
+import { useProjects } from "./hooks/useProjects";
 import { Login } from "./pages/Login";
 import { Chat } from "./pages/Chat";
-import type { ServerMessage } from "./types/messages";
+import { ProjectManager } from "./components/ProjectManager";
+import type { ServerMessage, Project } from "./types/messages";
 
 export default function App() {
   const { theme, resolved, setTheme } = useTheme();
@@ -17,6 +19,8 @@ export default function App() {
   const { preferences, updatePreference } = usePreferences();
   const capabilities = useCapabilities();
   const attachments = useAttachments();
+  const projectsHook = useProjects(auth.token);
+  const [projectManagerOpen, setProjectManagerOpen] = useState(false);
   const {
     messages,
     isProcessing,
@@ -34,7 +38,7 @@ export default function App() {
     fetchThreads,
     switchThread,
     startNewThread,
-  } = useThreads(auth.token);
+  } = useThreads(auth.token, projectsHook.activeProject?.path);
 
   // 当收到 chat_complete 时刷新 thread 列表
   const fetchThreadsRef = useRef(fetchThreads);
@@ -97,8 +101,12 @@ export default function App() {
       attachments.clear();
     }
 
+    const cwd = projectsHook.activeProject?.path
+      || threads.find((t) => t.id === activeThreadId)?.cwd
+      || undefined;
+
     addUserMessage(prompt);
-    ws.sendChat(finalPrompt, undefined, activeThreadId || undefined, preferences);
+    ws.sendChat(finalPrompt, cwd, activeThreadId || undefined, preferences);
   };
 
   const handleSwitchThread = async (threadId: string) => {
@@ -111,7 +119,14 @@ export default function App() {
     clearMessages();
   };
 
+  const handleSwitchProject = (project: Project | null) => {
+    projectsHook.switchProject(project);
+    startNewThread();
+    clearMessages();
+  };
+
   return (
+    <>
     <Chat
       messages={messages}
       isProcessing={isProcessing}
@@ -140,6 +155,20 @@ export default function App() {
       attachments={attachments.attachments}
       onAddAttachments={attachments.addAttachments}
       onRemoveAttachment={attachments.removeAttachment}
+      activeProject={projectsHook.activeProject}
+      projects={projectsHook.projects}
+      onSwitchProject={handleSwitchProject}
+      onManageProjects={() => setProjectManagerOpen(true)}
+      showProjectLabel={!projectsHook.activeProject}
     />
+    <ProjectManager
+      open={projectManagerOpen}
+      onOpenChange={setProjectManagerOpen}
+      projects={projectsHook.projects}
+      token={auth.token!}
+      onAddProject={projectsHook.addProject}
+      onRemoveProject={projectsHook.removeProject}
+    />
+  </>
   );
 }

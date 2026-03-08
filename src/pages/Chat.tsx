@@ -1,5 +1,5 @@
 import { useRef, useEffect, useState } from "react";
-import { Menu, MoreVertical, Plus, LogOut, Sparkles, Sun, Moon, Monitor, Check } from "lucide-react";
+import { Menu, MoreVertical, Plus, LogOut, Sparkles, Sun, Moon, Monitor, Check, FolderOpen, ChevronDown, Layers } from "lucide-react";
 import { Button } from "../components/ui/button";
 import { Badge } from "../components/ui/badge";
 import {
@@ -13,7 +13,7 @@ import { MessageList } from "../components/MessageList";
 import { InputBar } from "../components/InputBar";
 import { ThreadSidebar } from "../components/ThreadSidebar";
 import { useSidebarPin } from "../hooks/useSidebarPin";
-import type { ConnectionStatus, ChatMessage, Thread, ModelInfo, McpServerInfo, SlashCommandInfo, SessionPreferences, Attachment } from "../types/messages";
+import type { ConnectionStatus, ChatMessage, Thread, ModelInfo, McpServerInfo, SlashCommandInfo, SessionPreferences, Attachment, Project } from "../types/messages";
 import type { Theme } from "../hooks/useTheme";
 
 interface Props {
@@ -43,6 +43,12 @@ interface Props {
   attachments: Attachment[];
   onAddAttachments: (files: FileList) => void;
   onRemoveAttachment: (id: string) => void;
+  // 项目
+  activeProject: Project | null;
+  projects: Project[];
+  onSwitchProject: (project: Project | null) => void;
+  onManageProjects: () => void;
+  showProjectLabel: boolean;
 }
 
 export function Chat({
@@ -70,6 +76,11 @@ export function Chat({
   attachments,
   onAddAttachments,
   onRemoveAttachment,
+  activeProject,
+  projects,
+  onSwitchProject,
+  onManageProjects,
+  showProjectLabel,
 }: Props) {
   const bottomRef = useRef<HTMLDivElement>(null);
   const { isPinned, isDesktop, isEffectivelyPinned, togglePin } = useSidebarPin();
@@ -110,6 +121,7 @@ export function Chat({
         onTogglePin={togglePin}
         sheetOpen={sidebarOpen}
         onSheetOpenChange={setSidebarOpen}
+        showProjectLabel={showProjectLabel}
       />
 
       {/* Main content */}
@@ -133,9 +145,44 @@ export function Chat({
             </Badge>
           </div>
 
-          <h1 className="text-sm font-semibold text-foreground/90 tracking-tight absolute left-1/2 -translate-x-1/2">
-            Claude Code
-          </h1>
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <button className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg hover:bg-(--color-overlay-hover) transition-colors cursor-pointer absolute left-1/2 -translate-x-1/2 max-w-[50%]">
+                <FolderOpen className="size-3.5 text-primary shrink-0" />
+                <span className="text-sm font-semibold text-foreground/90 tracking-tight truncate">
+                  {activeProject?.name || "All Projects"}
+                </span>
+                <ChevronDown className="size-3 text-muted-foreground/60 shrink-0" />
+              </button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="center" className="w-56">
+              <DropdownMenuItem onClick={() => onSwitchProject(null)}>
+                <Layers className="size-4" />
+                All Projects
+                {!activeProject && <Check className="size-3 ml-auto text-primary" />}
+              </DropdownMenuItem>
+              {projects.length > 0 && <DropdownMenuSeparator />}
+              {projects.map((project) => (
+                <DropdownMenuItem
+                  key={project.path}
+                  onClick={() => onSwitchProject(project)}
+                >
+                  <FolderOpen className="size-4" />
+                  <div className="flex-1 min-w-0">
+                    <span className="truncate">{project.name}</span>
+                  </div>
+                  {activeProject?.path === project.path && (
+                    <Check className="size-3 ml-auto text-primary shrink-0" />
+                  )}
+                </DropdownMenuItem>
+              ))}
+              <DropdownMenuSeparator />
+              <DropdownMenuItem onClick={onManageProjects}>
+                <Plus className="size-4" />
+                Manage Projects...
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
 
           <DropdownMenu>
             <DropdownMenuTrigger asChild>

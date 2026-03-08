@@ -24,6 +24,7 @@ interface Props {
   onTogglePin: () => void;
   sheetOpen: boolean;
   onSheetOpenChange: (open: boolean) => void;
+  showProjectLabel: boolean;
 }
 
 function timeAgo(ts: number): string {
@@ -49,6 +50,7 @@ export function ThreadSidebar({
   onTogglePin,
   sheetOpen,
   onSheetOpenChange,
+  showProjectLabel,
 }: Props) {
   const handleSelectThread = (threadId: string) => {
     onSelectThread(threadId);
@@ -157,6 +159,11 @@ export function ThreadSidebar({
                 </p>
                 <p className="text-xs text-muted-foreground/70 mt-1">
                   {timeAgo(thread.lastModified)}
+                  {showProjectLabel && thread.cwd && (
+                    <span className="ml-1.5 text-primary/50">
+                      {thread.cwd.split("/").filter(Boolean).pop()}
+                    </span>
+                  )}
                 </p>
               </div>
             </button>

@@ -93,6 +93,19 @@ export class DataStore {
       .run(sessionId, role, JSON.stringify(content));
   }
 
+  getProjects(): Array<{ path: string; name: string; addedAt: number }> {
+    const row = this.db
+      .query("SELECT value FROM config WHERE key = ?")
+      .get("projects") as { value: string } | null;
+    return row ? JSON.parse(row.value) : [];
+  }
+
+  setProjects(projects: Array<{ path: string; name: string; addedAt: number }>) {
+    this.db
+      .query("INSERT OR REPLACE INTO config (key, value) VALUES (?, ?)")
+      .run("projects", JSON.stringify(projects));
+  }
+
   getRecentSessions(limit = 20) {
     return this.db
       .query("SELECT * FROM sessions ORDER BY started_at DESC LIMIT ?")

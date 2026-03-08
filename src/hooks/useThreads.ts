@@ -1,7 +1,7 @@
 import { useState, useCallback, useEffect } from "react";
 import type { Thread } from "../types/messages";
 
-export function useThreads(token: string | null) {
+export function useThreads(token: string | null, projectPath?: string) {
   const [threads, setThreads] = useState<Thread[]>([]);
   const [activeThreadId, setActiveThreadId] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
@@ -10,7 +10,9 @@ export function useThreads(token: string | null) {
     if (!token) return;
     setLoading(true);
     try {
-      const res = await fetch("/api/threads?limit=30", {
+      const params = new URLSearchParams({ limit: "30" });
+      if (projectPath) params.set("dir", projectPath);
+      const res = await fetch(`/api/threads?${params}`, {
         headers: { Authorization: `Bearer ${token}` },
       });
       if (res.ok) {
@@ -22,7 +24,7 @@ export function useThreads(token: string | null) {
     } finally {
       setLoading(false);
     }
-  }, [token]);
+  }, [token, projectPath]);
 
   const loadThreadMessages = useCallback(
     async (threadId: string) => {

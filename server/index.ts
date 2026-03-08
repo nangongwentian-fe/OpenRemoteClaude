@@ -8,6 +8,7 @@ import { createAuthRoutes } from "./auth";
 import { createWSHandlers, type WSState } from "./ws";
 import { createThreadRoutes } from "./threads";
 import { createUploadRoutes } from "./upload";
+import { createProjectRoutes } from "./projects";
 import { launchTunnel, getTunnelInfo, stopTunnel } from "./tunnel";
 
 const PORT = parseInt(process.env.PORT || "3456");
@@ -31,6 +32,9 @@ app.get("/api/tunnel", (c) => c.json(getTunnelInfo()));
 
 // Thread 管理路由（需要 JWT）
 app.route("/api/threads", createThreadRoutes(JWT_SECRET));
+
+// 项目管理路由（需要 JWT）
+app.route("/api/projects", createProjectRoutes(db, JWT_SECRET));
 
 // 文件上传路由（需要 JWT）
 app.route("/api", createUploadRoutes(JWT_SECRET));

@@ -167,3 +167,10 @@ export interface Thread {
   lastModified: number;
   cwd?: string;
 }
+
+// 项目类型
+export interface Project {
+  path: string;
+  name: string;
+  addedAt: number;
+}
