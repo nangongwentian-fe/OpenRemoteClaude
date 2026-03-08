@@ -1,6 +1,6 @@
 import { Hono } from "hono";
 import { jwt } from "hono/jwt";
-import { readdirSync, statSync, existsSync } from "node:fs";
+import { readdirSync, statSync, existsSync, mkdirSync, rmSync } from "node:fs";
 import { join, dirname, basename, resolve } from "node:path";
 import type { DataStore } from "./db";
 
@@ -62,6 +62,72 @@ export function createProjectRoutes(db: DataStore, jwtSecret: string) {
     }
 
     db.setProjects(filtered);
+    return c.json({ ok: true });
+  });
+
+  // POST /api/projects/mkdir — 创建文件夹
+  app.post("/mkdir", async (c) => {
+    const body = await c.req.json<{ parent: string; name: string }>();
+    const name = body.name?.trim();
+
+    if (!name || name.length > 255 || /[\/\\\0]/.test(name) || name.startsWith(".") || name.includes("..")) {
+      return c.json({ error: "Invalid folder name" }, 400);
+    }
+
+    const absParent = resolve(body.parent);
+    if (!existsSync(absParent) || !statSync(absParent).isDirectory()) {
+      return c.json({ error: "Parent path does not exist or is not a directory" }, 400);
+    }
+
+    const targetPath = join(absParent, name);
+    if (existsSync(targetPath)) {
+      return c.json({ error: "A file or folder with this name already exists" }, 400);
+    }
+
+    try {
+      mkdirSync(targetPath);
+    } catch {
+      return c.json({ error: "Failed to create folder" }, 403);
+    }
+
+    return c.json({ ok: true, path: targetPath });
+  });
+
+  // POST /api/projects/rmdir — 删除文件夹
+  app.post("/rmdir", async (c) => {
+    const body = await c.req.json<{ path: string; force?: boolean }>();
+    const absPath = resolve(body.path);
+
+    if (!existsSync(absPath) || !statSync(absPath).isDirectory()) {
+      return c.json({ error: "Path does not exist or is not a directory" }, 400);
+    }
+
+    if (absPath === "/" || absPath === process.env.HOME) {
+      return c.json({ error: "Cannot delete protected directory" }, 403);
+    }
+
+    const projects = db.getProjects();
+    if (projects.some((p) => p.path === absPath)) {
+      return c.json({ error: "Cannot delete a registered project directory. Remove it from projects first." }, 400);
+    }
+
+    if (!body.force) {
+      try {
+        const contents = readdirSync(absPath);
+        if (contents.length > 0) {
+          return c.json({ error: "Directory is not empty", count: contents.length }, 400);
+        }
+      } catch {
+        return c.json({ error: "Cannot read directory" }, 403);
+      }
+    }
+
+    try {
+      rmSync(absPath, { recursive: true });
+    } catch {
+      return c.json({ error: "Failed to delete folder" }, 403);
+    }
+
     return c.json({ ok: true });
   });
 

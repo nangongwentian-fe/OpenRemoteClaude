@@ -79,5 +79,29 @@ export function createUploadRoutes(jwtSecret: string) {
     });
   });
 
+  // 文件服务（用于前端图片预览等）
+  app.get("/uploads/:filename", async (c) => {
+    const filename = c.req.param("filename");
+
+    // 防止路径穿越
+    if (!filename || filename.includes("..") || filename.includes("/") || filename.includes("\\")) {
+      return c.json({ error: "Invalid filename" }, 400);
+    }
+
+    const filePath = join(UPLOAD_DIR, filename);
+    const file = Bun.file(filePath);
+
+    if (!(await file.exists())) {
+      return c.json({ error: "File not found" }, 404);
+    }
+
+    return new Response(file.stream(), {
+      headers: {
+        "Content-Type": file.type || "application/octet-stream",
+        "Cache-Control": "private, max-age=3600",
+      },
+    });
+  });
+
   return app;
 }

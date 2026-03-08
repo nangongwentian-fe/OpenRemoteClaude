@@ -42,6 +42,13 @@ export interface Attachment {
   serverPath?: string;
 }
 
+export interface AttachmentInfo {
+  name: string;
+  mimeType: string;
+  serverPath: string;
+  serverFileName: string;
+}
+
 // 客户端 → 服务端
 export type ClientMessage =
   | { type: "auth"; token: string }
@@ -137,6 +144,7 @@ export interface ChatMessage {
   blocks: DisplayBlock[];
   timestamp: number;
   isStreaming?: boolean;
+  attachments?: AttachmentInfo[];
 }
 
 export type DisplayBlock =

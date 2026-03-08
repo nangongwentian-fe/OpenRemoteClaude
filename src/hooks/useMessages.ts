@@ -3,6 +3,7 @@ import type {
   ChatMessage,
   DisplayBlock,
   ServerMessage,
+  AttachmentInfo,
 } from "../types/messages";
 
 export function useMessages() {
@@ -12,14 +13,16 @@ export function useMessages() {
   const streamingRef = useRef<{
     blocks: DisplayBlock[];
     toolInputs: Map<number, string>;
-  }>({ blocks: [], toolInputs: new Map() });
+    finalizedBlocks: DisplayBlock[];
+  }>({ blocks: [], toolInputs: new Map(), finalizedBlocks: [] });
 
-  const addUserMessage = useCallback((prompt: string) => {
+  const addUserMessage = useCallback((prompt: string, attachments?: AttachmentInfo[]) => {
     const msg: ChatMessage = {
       id: crypto.randomUUID(),
       role: "user",
       blocks: [{ type: "text", text: prompt }],
       timestamp: Date.now(),
+      attachments: attachments?.length ? attachments : undefined,
     };
     setMessages((prev) => [...prev, msg]);
   }, []);
@@ -28,7 +31,7 @@ export function useMessages() {
     switch (msg.type) {
       case "chat_started": {
         setIsProcessing(true);
-        streamingRef.current = { blocks: [], toolInputs: new Map() };
+        streamingRef.current = { blocks: [], toolInputs: new Map(), finalizedBlocks: [] };
         // 创建一个空的 assistant 消息占位
         const placeholder: ChatMessage = {
           id: crypto.randomUUID(),
@@ -125,23 +128,29 @@ export function useMessages() {
               collapsed: true,
             };
           if (block.type === "tool_result") {
-            // 工具结果需要合并到对应的 tool_use block
+            // 同步更新 finalizedBlocks 中对应的 tool_use
+            const resultContent =
+              typeof block.content === "string"
+                ? block.content
+                : JSON.stringify(block.content);
+            for (const fb of streamingRef.current.finalizedBlocks) {
+              if (fb.type === "tool_use" && fb.id === block.tool_use_id) {
+                fb.result = resultContent;
+                fb.isError = block.is_error;
+              }
+            }
+            // 同时更新已渲染的消息
             setMessages((prev) => {
               const updated = [...prev];
               const last = updated[updated.length - 1];
               if (last?.role === "assistant") {
-                for (const b of last.blocks) {
-                  if (
-                    b.type === "tool_use" &&
-                    b.id === block.tool_use_id
-                  ) {
-                    b.result =
-                      typeof block.content === "string"
-                        ? block.content
-                        : JSON.stringify(block.content);
-                    b.isError = block.is_error;
+                const updatedBlocks = last.blocks.map((b) => {
+                  if (b.type === "tool_use" && b.id === block.tool_use_id) {
+                    return { ...b, result: resultContent, isError: block.is_error };
                   }
-                }
+                  return b;
+                });
+                updated[updated.length - 1] = { ...last, blocks: updatedBlocks };
               }
               return updated;
             });
@@ -151,22 +160,29 @@ export function useMessages() {
         }).filter(Boolean) as DisplayBlock[];
 
         if (blocks.length > 0) {
-          // 重置流式状态，用完整消息替换
-          streamingRef.current = { blocks: [], toolInputs: new Map() };
+          // 将已完成轮次的 blocks 追加到 finalizedBlocks，重置流式 blocks
+          streamingRef.current.finalizedBlocks = [
+            ...streamingRef.current.finalizedBlocks,
+            ...blocks,
+          ];
+          streamingRef.current.blocks = [];
+          streamingRef.current.toolInputs = new Map();
+
+          const allBlocks = [...streamingRef.current.finalizedBlocks];
           setMessages((prev) => {
             const updated = [...prev];
             const lastIdx = updated.length - 1;
             if (lastIdx >= 0 && updated[lastIdx].isStreaming) {
               updated[lastIdx] = {
                 ...updated[lastIdx],
-                blocks,
-                isStreaming: true, // 可能还有更多轮次
+                blocks: allBlocks,
+                isStreaming: true,
               };
             } else {
               updated.push({
                 id: crypto.randomUUID(),
                 role: "assistant",
-                blocks,
+                blocks: allBlocks,
                 timestamp: Date.now(),
                 isStreaming: true,
               });
@@ -185,7 +201,7 @@ export function useMessages() {
       case "result":
       case "chat_complete": {
         setIsProcessing(false);
-        streamingRef.current = { blocks: [], toolInputs: new Map() };
+        streamingRef.current = { blocks: [], toolInputs: new Map(), finalizedBlocks: [] };
         setMessages((prev) => {
           const updated = [...prev];
           const lastIdx = updated.length - 1;
@@ -218,13 +234,17 @@ export function useMessages() {
   }, []);
 
   function updateLastAssistant(blocks: DisplayBlock[]) {
+    const finalized = streamingRef.current.finalizedBlocks;
     setMessages((prev) => {
       const updated = [...prev];
       const lastIdx = updated.length - 1;
       if (lastIdx >= 0 && updated[lastIdx].role === "assistant") {
         updated[lastIdx] = {
           ...updated[lastIdx],
-          blocks: blocks.filter(Boolean).map((b) => ({ ...b })),
+          blocks: [
+            ...finalized.map((b) => ({ ...b })),
+            ...blocks.filter(Boolean).map((b) => ({ ...b })),
+          ],
         };
       }
       return updated;
@@ -236,6 +256,53 @@ export function useMessages() {
     setIsProcessing(false);
     setCurrentSessionId(null);
   }, []);
+
+  // 从历史消息文本中提取附件信息
+  function parseAttachmentsFromText(text: string): {
+    cleanText: string;
+    attachments: AttachmentInfo[];
+  } {
+    const pattern = /\n\n\[Attached files:\n([\s\S]*?)\n\]$/;
+    const match = text.match(pattern);
+    if (!match) return { cleanText: text, attachments: [] };
+
+    const cleanText = text.replace(pattern, "");
+    const lines = match[1].split("\n").filter((l) => l.startsWith("- "));
+    const extToMime: Record<string, string> = {
+      png: "image/png",
+      jpg: "image/jpeg",
+      jpeg: "image/jpeg",
+      gif: "image/gif",
+      webp: "image/webp",
+      svg: "image/svg+xml",
+      pdf: "application/pdf",
+      txt: "text/plain",
+      ts: "text/typescript",
+      tsx: "text/typescript",
+      js: "text/javascript",
+      json: "application/json",
+    };
+
+    const attachments: AttachmentInfo[] = lines.map((line) => {
+      const serverPath = line.slice(2).trim();
+      const serverFileName = serverPath.split("/").pop() || serverPath;
+      // 去掉 UUID 前缀 (格式: uuid-originalname)
+      const nameParts = serverFileName.split("-");
+      const name =
+        nameParts.length > 5
+          ? nameParts.slice(5).join("-")
+          : serverFileName;
+      const ext = name.split(".").pop()?.toLowerCase() || "";
+      return {
+        name,
+        mimeType: extToMime[ext] || "application/octet-stream",
+        serverPath,
+        serverFileName,
+      };
+    });
+
+    return { cleanText, attachments };
+  }
 
   // 加载历史消息（从 SDK SessionMessage[] 转换为 ChatMessage[]）
   const loadHistoryMessages = useCallback(
@@ -255,11 +322,13 @@ export function useMessages() {
               .join("");
           }
           if (text) {
+            const { cleanText, attachments } = parseAttachmentsFromText(text);
             converted.push({
               id: raw.uuid,
               role: "user",
-              blocks: [{ type: "text", text }],
+              blocks: [{ type: "text", text: cleanText }],
               timestamp: Date.now(),
+              attachments: attachments.length ? attachments : undefined,
             });
           }
         } else if (raw.type === "assistant") {

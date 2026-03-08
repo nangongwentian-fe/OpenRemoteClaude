@@ -120,10 +120,12 @@ export default function App() {
   const handleSend = async (prompt: string) => {
     // 上传附件
     let finalPrompt = prompt;
+    let attachmentInfos: import("./types/messages").AttachmentInfo[] | undefined;
     if (attachments.attachments.length > 0) {
-      const filePaths = await attachments.uploadAll(auth.token!);
-      if (filePaths.length > 0) {
-        finalPrompt = `${prompt}\n\n[Attached files:\n${filePaths.map((p) => `- ${p}`).join("\n")}\n]`;
+      const infos = await attachments.uploadAll(auth.token!);
+      if (infos.length > 0) {
+        attachmentInfos = infos;
+        finalPrompt = `${prompt}\n\n[Attached files:\n${infos.map((i) => `- ${i.serverPath}`).join("\n")}\n]`;
       }
       attachments.clear();
     }
@@ -132,7 +134,7 @@ export default function App() {
       || threads.find((t) => t.id === activeThreadId)?.cwd
       || undefined;
 
-    addUserMessage(prompt);
+    addUserMessage(prompt, attachmentInfos);
     ws.sendChat(finalPrompt, cwd, activeThreadId || undefined, preferences);
   };
 

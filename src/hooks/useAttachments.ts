@@ -1,5 +1,5 @@
 import { useState, useCallback } from "react";
-import type { Attachment } from "../types/messages";
+import type { Attachment, AttachmentInfo } from "../types/messages";
 
 export function useAttachments() {
   const [attachments, setAttachments] = useState<Attachment[]>([]);
@@ -26,11 +26,20 @@ export function useAttachments() {
   }, []);
 
   const uploadAll = useCallback(
-    async (token: string): Promise<string[]> => {
+    async (token: string): Promise<AttachmentInfo[]> => {
       const pending = attachments.filter((a) => a.uploadStatus === "pending");
-      if (pending.length === 0) return attachments.filter((a) => a.serverPath).map((a) => a.serverPath!);
+      if (pending.length === 0) {
+        return attachments
+          .filter((a) => a.serverPath)
+          .map((a) => ({
+            name: a.name,
+            mimeType: a.type,
+            serverPath: a.serverPath!,
+            serverFileName: a.serverPath!.split("/").pop()!,
+          }));
+      }
 
-      const paths: string[] = [];
+      const infos: AttachmentInfo[] = [];
 
       for (const att of pending) {
         setAttachments((prev) =>
@@ -52,8 +61,18 @@ export function useAttachments() {
             throw new Error((err as { error: string }).error);
           }
 
-          const data = (await res.json()) as { filePath: string };
-          paths.push(data.filePath);
+          const data = (await res.json()) as {
+            filePath: string;
+            fileName: string;
+            mimeType: string;
+          };
+
+          infos.push({
+            name: data.fileName,
+            mimeType: data.mimeType,
+            serverPath: data.filePath,
+            serverFileName: data.filePath.split("/").pop()!,
+          });
 
           setAttachments((prev) =>
             prev.map((a) =>
@@ -67,12 +86,17 @@ export function useAttachments() {
         }
       }
 
-      // 也返回已上传的文件
+      // 也加入已上传的文件
       const existing = attachments
         .filter((a) => a.uploadStatus === "done" && a.serverPath)
-        .map((a) => a.serverPath!);
+        .map((a) => ({
+          name: a.name,
+          mimeType: a.type,
+          serverPath: a.serverPath!,
+          serverFileName: a.serverPath!.split("/").pop()!,
+        }));
 
-      return [...existing, ...paths];
+      return [...existing, ...infos];
     },
     [attachments]
   );

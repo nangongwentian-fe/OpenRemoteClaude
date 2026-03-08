@@ -1,14 +1,18 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import {
   FolderOpen,
   FolderGit2,
+  FolderPlus,
   ChevronRight,
   Trash2,
   Plus,
   ArrowUp,
   Loader2,
+  Check,
+  X,
 } from "lucide-react";
 import { Button } from "./ui/button";
+import { Input } from "./ui/input";
 import { ScrollArea } from "./ui/scroll-area";
 import { Separator } from "./ui/separator";
 import {
@@ -49,6 +53,11 @@ export function ProjectManager({
   const [browseLoading, setBrowseLoading] = useState(false);
   const [adding, setAdding] = useState(false);
   const [error, setError] = useState("");
+  const [creatingFolder, setCreatingFolder] = useState(false);
+  const [newFolderName, setNewFolderName] = useState("");
+  const [folderCreating, setFolderCreating] = useState(false);
+  const [deleting, setDeleting] = useState<string | null>(null);
+  const newFolderInputRef = useRef<HTMLInputElement>(null);
 
   const browse = useCallback(
     async (path?: string) => {
@@ -97,6 +106,74 @@ export function ProjectManager({
 
   const isAlreadyAdded = projects.some((p) => p.path === browsePath);
 
+  const handleCreateFolder = async () => {
+    if (!newFolderName.trim() || !browsePath) return;
+    setFolderCreating(true);
+    setError("");
+    try {
+      const res = await fetch("/api/projects/mkdir", {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ parent: browsePath, name: newFolderName.trim() }),
+      });
+      if (res.ok) {
+        setCreatingFolder(false);
+        setNewFolderName("");
+        await browse(browsePath);
+      } else {
+        const data = await res.json();
+        setError(data.error || "Failed to create folder");
+      }
+    } catch {
+      setError("Failed to connect");
+    } finally {
+      setFolderCreating(false);
+    }
+  };
+
+  const handleDeleteFolder = async (name: string, force = false) => {
+    const fullPath = `${browsePath === "/" ? "" : browsePath}/${name}`;
+    if (!force && !window.confirm(`Delete folder "${name}"?`)) return;
+    setDeleting(name);
+    setError("");
+    try {
+      const res = await fetch("/api/projects/rmdir", {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ path: fullPath, force }),
+      });
+      if (res.ok) {
+        await browse(browsePath);
+      } else {
+        const data = await res.json();
+        if (data.error?.includes("not empty") && !force) {
+          if (window.confirm(`Folder "${name}" is not empty (${data.count} items). Delete anyway?`)) {
+            await handleDeleteFolder(name, true);
+            return;
+          }
+        } else {
+          setError(data.error || "Failed to delete");
+        }
+      }
+    } catch {
+      setError("Failed to connect");
+    } finally {
+      setDeleting(null);
+    }
+  };
+
+  useEffect(() => {
+    if (creatingFolder) {
+      newFolderInputRef.current?.focus();
+    }
+  }, [creatingFolder]);
+
   // 面包屑路径段
   const pathSegments = browsePath
     .split("/")
@@ -126,32 +203,34 @@ export function ProjectManager({
                 Added Projects
               </p>
             </div>
-            <div className="px-3 pb-3 flex flex-col gap-1">
-              {projects.map((project) => (
-                <div
-                  key={project.path}
-                  className="flex items-center gap-2 px-3 py-2.5 rounded-xl bg-(--color-overlay) border border-(--color-overlay-border) group"
-                >
-                  <FolderGit2 className="size-4 text-primary shrink-0" />
-                  <div className="flex-1 min-w-0">
-                    <p className="text-sm font-medium truncate">
-                      {project.name}
-                    </p>
-                    <p className="text-[11px] text-muted-foreground/60 truncate">
-                      {project.path}
-                    </p>
-                  </div>
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    className="size-7 rounded-lg opacity-0 group-hover:opacity-100 hover:bg-destructive/10 hover:text-destructive transition-all shrink-0"
-                    onClick={() => onRemoveProject(project.path)}
+            <ScrollArea className="max-h-60">
+              <div className="px-3 pb-3 flex flex-col gap-1">
+                {projects.map((project) => (
+                  <div
+                    key={project.path}
+                    className="flex items-center gap-2 px-3 py-2.5 rounded-xl bg-(--color-overlay) border border-(--color-overlay-border) group"
                   >
-                    <Trash2 className="size-3.5" />
-                  </Button>
-                </div>
-              ))}
-            </div>
+                    <FolderGit2 className="size-4 text-primary shrink-0" />
+                    <div className="flex-1 min-w-0">
+                      <p className="text-sm font-medium truncate">
+                        {project.name}
+                      </p>
+                      <p className="text-[11px] text-muted-foreground/60 truncate">
+                        {project.path}
+                      </p>
+                    </div>
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="size-7 rounded-lg opacity-40 sm:opacity-0 sm:group-hover:opacity-100 hover:bg-destructive/10 hover:text-destructive transition-all shrink-0"
+                      onClick={() => onRemoveProject(project.path)}
+                    >
+                      <Trash2 className="size-3.5" />
+                    </Button>
+                  </div>
+                ))}
+              </div>
+            </ScrollArea>
             <Separator className="bg-(--color-overlay-border)" />
           </>
         )}
@@ -165,7 +244,7 @@ export function ProjectManager({
 
         {/* 面包屑导航 */}
         <div className="px-4 pb-2">
-          <div className="flex items-center gap-0.5 text-xs overflow-x-auto [-webkit-overflow-scrolling:touch] scrollbar-none">
+          <div className="flex items-center gap-0.5 text-xs overflow-x-auto [-webkit-overflow-scrolling:touch] pb-1.5 [&::-webkit-scrollbar]:h-1 [&::-webkit-scrollbar-track]:rounded-full [&::-webkit-scrollbar-track]:bg-transparent [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-muted-foreground/20 hover:[&::-webkit-scrollbar-thumb]:bg-muted-foreground/40">
             <button
               onClick={() => browse("/")}
               className="text-muted-foreground hover:text-foreground transition-colors shrink-0 cursor-pointer"
@@ -211,32 +290,49 @@ export function ProjectManager({
                 </button>
               )}
               {entries.map((entry) => (
-                <button
+                <div
                   key={entry.name}
-                  onClick={() => browse(`${browsePath === "/" ? "" : browsePath}/${entry.name}`)}
-                  className="flex items-center gap-2.5 px-3 py-2.5 rounded-xl hover:bg-(--color-overlay-hover) transition-colors text-left cursor-pointer group"
+                  className="flex items-center rounded-xl hover:bg-(--color-overlay-hover) transition-colors group"
                 >
-                  {entry.isGitRepo ? (
-                    <FolderGit2 className="size-4 text-primary shrink-0" />
-                  ) : (
-                    <FolderOpen className="size-4 text-muted-foreground shrink-0" />
-                  )}
-                  <span
-                    className={cn(
-                      "text-sm truncate",
-                      entry.isGitRepo
-                        ? "font-medium text-foreground"
-                        : "text-foreground/80"
-                    )}
+                  <button
+                    onClick={() => browse(`${browsePath === "/" ? "" : browsePath}/${entry.name}`)}
+                    className="flex-1 flex items-center gap-2.5 px-3 py-2.5 text-left cursor-pointer min-w-0"
                   >
-                    {entry.name}
-                  </span>
-                  {entry.isGitRepo && (
-                    <span className="text-[10px] text-primary/60 bg-primary/10 px-1.5 py-0.5 rounded-full ml-auto shrink-0">
-                      git
+                    {entry.isGitRepo ? (
+                      <FolderGit2 className="size-4 text-primary shrink-0" />
+                    ) : (
+                      <FolderOpen className="size-4 text-muted-foreground shrink-0" />
+                    )}
+                    <span
+                      className={cn(
+                        "text-sm truncate",
+                        entry.isGitRepo
+                          ? "font-medium text-foreground"
+                          : "text-foreground/80"
+                      )}
+                    >
+                      {entry.name}
                     </span>
-                  )}
-                </button>
+                    {entry.isGitRepo && (
+                      <span className="text-[10px] text-primary/60 bg-primary/10 px-1.5 py-0.5 rounded-full ml-auto shrink-0">
+                        git
+                      </span>
+                    )}
+                  </button>
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className="size-7 rounded-lg opacity-40 hover:opacity-100 hover:bg-destructive/10 hover:text-destructive transition-all shrink-0 mr-2"
+                    onClick={() => handleDeleteFolder(entry.name)}
+                    disabled={deleting === entry.name}
+                  >
+                    {deleting === entry.name ? (
+                      <Loader2 className="size-3.5 animate-spin" />
+                    ) : (
+                      <Trash2 className="size-3.5" />
+                    )}
+                  </Button>
+                </div>
               ))}
               {entries.length === 0 && !browseLoading && (
                 <div className="flex flex-col items-center justify-center py-8 text-muted-foreground/50">
@@ -253,18 +349,73 @@ export function ProjectManager({
           {error && (
             <p className="text-xs text-destructive mb-2">{error}</p>
           )}
-          <Button
-            className="w-full gap-2"
-            onClick={handleAddCurrent}
-            disabled={!browsePath || isAlreadyAdded || adding}
-          >
-            {adding ? (
-              <Loader2 className="size-4 animate-spin" />
-            ) : (
-              <Plus className="size-4" />
-            )}
-            {isAlreadyAdded ? "Already Added" : "Add This Directory"}
-          </Button>
+          {creatingFolder ? (
+            <div className="flex items-center gap-2">
+              <Input
+                ref={newFolderInputRef}
+                value={newFolderName}
+                onChange={(e) => setNewFolderName(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") handleCreateFolder();
+                  if (e.key === "Escape") {
+                    setCreatingFolder(false);
+                    setNewFolderName("");
+                  }
+                }}
+                placeholder="Folder name"
+                className="flex-1 h-9 text-sm"
+                disabled={folderCreating}
+              />
+              <Button
+                size="icon"
+                className="size-9 shrink-0"
+                onClick={handleCreateFolder}
+                disabled={!newFolderName.trim() || folderCreating}
+              >
+                {folderCreating ? (
+                  <Loader2 className="size-4 animate-spin" />
+                ) : (
+                  <Check className="size-4" />
+                )}
+              </Button>
+              <Button
+                variant="ghost"
+                size="icon"
+                className="size-9 shrink-0"
+                onClick={() => {
+                  setCreatingFolder(false);
+                  setNewFolderName("");
+                }}
+                disabled={folderCreating}
+              >
+                <X className="size-4" />
+              </Button>
+            </div>
+          ) : (
+            <div className="flex items-center gap-2">
+              <Button
+                variant="outline"
+                className="flex-1 gap-2"
+                onClick={() => setCreatingFolder(true)}
+                disabled={!browsePath}
+              >
+                <FolderPlus className="size-4" />
+                New Folder
+              </Button>
+              <Button
+                className="flex-1 gap-2"
+                onClick={handleAddCurrent}
+                disabled={!browsePath || isAlreadyAdded || adding}
+              >
+                {adding ? (
+                  <Loader2 className="size-4 animate-spin" />
+                ) : (
+                  <Plus className="size-4" />
+                )}
+                {isAlreadyAdded ? "Already Added" : "Add This Directory"}
+              </Button>
+            </div>
+          )}
           {browsePath && (
             <p className="text-[11px] text-muted-foreground/60 text-center mt-2 truncate">
               {browsePath}

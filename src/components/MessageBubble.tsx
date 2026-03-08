@@ -1,4 +1,7 @@
-import type { ChatMessage, DisplayBlock } from "../types/messages";
+import { useState } from "react";
+import { createPortal } from "react-dom";
+import { FileText, X } from "lucide-react";
+import type { ChatMessage, DisplayBlock, AttachmentInfo } from "../types/messages";
 import { ToolCallCard } from "./ToolCallCard";
 import { ThinkingBlock } from "./ThinkingBlock";
 import { MarkdownRenderer } from "./MarkdownRenderer";
@@ -33,6 +36,9 @@ export function MessageBubble({ message }: Props) {
           <BlockRenderer key={i} block={block} isUser={isUser} />
         ))}
         {message.isStreaming && <span className="streaming-cursor" />}
+        {message.attachments && message.attachments.length > 0 && (
+          <MessageAttachments attachments={message.attachments} isUser={isUser} />
+        )}
       </div>
     </div>
   );
@@ -64,4 +70,83 @@ function BlockRenderer({ block, isUser }: { block: DisplayBlock; isUser: boolean
     default:
       return null;
   }
+}
+
+function MessageAttachments({
+  attachments,
+  isUser,
+}: {
+  attachments: AttachmentInfo[];
+  isUser: boolean;
+}) {
+  const [previewSrc, setPreviewSrc] = useState<string | null>(null);
+
+  return (
+    <>
+      <div className={cn("flex items-center gap-2 mt-2 flex-wrap", isUser ? "justify-end" : "")}>
+        {attachments.map((att, i) => {
+          const isImage = att.mimeType.startsWith("image/");
+          const ext = att.name.split(".").pop()?.toLowerCase() || "";
+
+          return isImage ? (
+            <img
+              key={i}
+              src={`/api/uploads/${att.serverFileName}`}
+              alt={att.name}
+              className="size-12 rounded-lg object-cover border border-primary-foreground/20 cursor-pointer hover:opacity-80 transition-opacity"
+              onClick={() => setPreviewSrc(`/api/uploads/${att.serverFileName}`)}
+            />
+          ) : (
+            <div
+              key={i}
+              className={cn(
+                "size-12 rounded-lg flex flex-col items-center justify-center gap-0.5",
+                isUser
+                  ? "bg-primary-foreground/15 border border-primary-foreground/20"
+                  : "border border-(--color-overlay-border) bg-(--color-overlay)"
+              )}
+              title={att.name}
+            >
+              <FileText
+                className={cn(
+                  "size-4",
+                  isUser ? "text-primary-foreground/60" : "text-muted-foreground/60"
+                )}
+              />
+              <span
+                className={cn(
+                  "text-[8px] max-w-10 truncate",
+                  isUser ? "text-primary-foreground/50" : "text-muted-foreground/50"
+                )}
+              >
+                {ext}
+              </span>
+            </div>
+          );
+        })}
+      </div>
+
+      {previewSrc &&
+        createPortal(
+          <div
+            className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm animate-in fade-in duration-200"
+            onClick={() => setPreviewSrc(null)}
+          >
+            <button
+              className="absolute top-4 right-4 size-10 rounded-full bg-white/10 hover:bg-white/20 flex items-center justify-center transition-colors cursor-pointer"
+              onClick={() => setPreviewSrc(null)}
+            >
+              <X className="size-5 text-white" />
+            </button>
+            <img
+              src={previewSrc}
+              alt="Preview"
+              className="max-w-[90vw] max-h-[90vh] object-contain rounded-lg shadow-2xl"
+              onClick={(e) => e.stopPropagation()}
+            />
+          </div>,
+          document.body
+        )}
+    </>
+  );
 }
