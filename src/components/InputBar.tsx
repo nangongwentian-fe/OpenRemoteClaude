@@ -5,6 +5,7 @@ import { ModelChip } from "./ModelChip";
 import { EffortChip } from "./EffortChip";
 import { ThinkingChip } from "./ThinkingChip";
 import { McpStatusChip } from "./McpStatusChip";
+import { PermissionModeChip } from "./PermissionModeChip";
 import { SlashCommandButton } from "./SlashCommandButton";
 import { AttachmentButton } from "./AttachmentButton";
 import { AttachmentPreview } from "./AttachmentPreview";
@@ -15,6 +16,7 @@ import type {
   McpServerInfo,
   SlashCommandInfo,
   SessionPreferences,
+  PermissionMode,
   Attachment,
 } from "@/types/messages";
 
@@ -31,6 +33,9 @@ interface Props {
   mcpServers: McpServerInfo[];
   currentModel: string;
   onSetModel: (model: string) => void;
+  // 权限模式
+  currentPermissionMode: PermissionMode;
+  onSetPermissionMode: (mode: PermissionMode) => void;
   // 附件
   attachments: Attachment[];
   onAddAttachments: (files: FileList) => void;
@@ -49,6 +54,8 @@ export function InputBar({
   mcpServers,
   currentModel,
   onSetModel,
+  currentPermissionMode,
+  onSetPermissionMode,
   attachments,
   onAddAttachments,
   onRemoveAttachment,
@@ -176,6 +183,11 @@ export function InputBar({
                 onSelect={(m) => onUpdatePreference("thinking", m)}
               />
               <McpStatusChip servers={mcpServers} />
+              <PermissionModeChip
+                mode={currentPermissionMode}
+                onSelect={onSetPermissionMode}
+                disabled={isProcessing}
+              />
             </div>
 
             {/* 右侧：操作按钮 */}

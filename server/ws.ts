@@ -316,6 +316,9 @@ export function createWSHandlers(jwtSecret: string, db: DataStore) {
                   payload: { message: err.message },
                 });
               },
+              (permReq) => {
+                send(ws, { type: "permission_request", payload: permReq });
+              },
               payload.resumeSessionId,
               sessionOpts
             );
@@ -428,6 +431,16 @@ export function createWSHandlers(jwtSecret: string, db: DataStore) {
           break;
         }
 
+        case "permission_response": {
+          if (!ws.data.authenticated) return;
+          const permPayload = data.payload as { requestId: string; behavior: "allow" | "deny" };
+          const permSession = sessionManager.getActiveSession();
+          if (permSession && permPayload?.requestId) {
+            sessionManager.resolvePermission(permSession.id, permPayload.requestId, permPayload.behavior);
+          }
+          break;
+        }
+
         case "ping": {
           send(ws, { type: "pong" });
           break;
@@ -439,15 +452,20 @@ export function createWSHandlers(jwtSecret: string, db: DataStore) {
       console.log(`[WS] Client disconnected: ${ws.data.clientId}`);
 
       const activeSessionId = ws.data.activeSessionId;
-      if (activeSessionId && !disconnectTimers.has(activeSessionId)) {
-        disconnectTimers.set(
-          activeSessionId,
-          setTimeout(() => {
-            console.log(`[WS] Client did not reconnect, aborting session ${activeSessionId}`);
-            sessionManager.abortIfActive(activeSessionId);
-            disconnectTimers.delete(activeSessionId);
-          }, DISCONNECT_ABORT_DELAY_MS)
-        );
+      if (activeSessionId) {
+        // 立即 deny 所有 pending 权限请求，避免卡死
+        sessionManager.denyAllPendingPermissions(activeSessionId);
+
+        if (!disconnectTimers.has(activeSessionId)) {
+          disconnectTimers.set(
+            activeSessionId,
+            setTimeout(() => {
+              console.log(`[WS] Client did not reconnect, aborting session ${activeSessionId}`);
+              sessionManager.abortIfActive(activeSessionId);
+              disconnectTimers.delete(activeSessionId);
+            }, DISCONNECT_ABORT_DELAY_MS)
+          );
+        }
       }
     },
   };

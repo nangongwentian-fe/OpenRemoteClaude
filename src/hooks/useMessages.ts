@@ -237,6 +237,22 @@ export function useMessages() {
         ]);
         break;
       }
+
+      case "permission_request": {
+        const { requestId, toolName, input, decisionReason, description } = msg.payload;
+        const permBlock: DisplayBlock = {
+          type: "permission_request",
+          requestId,
+          toolName,
+          input,
+          status: "pending",
+          decisionReason,
+          description,
+        };
+        streamingRef.current.blocks.push(permBlock);
+        updateLastAssistant(streamingRef.current.blocks);
+        break;
+      }
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -272,6 +288,31 @@ export function useMessages() {
     setIsProcessing(false);
     setCurrentSessionId(null);
   }, []);
+
+  const updatePermissionStatus = useCallback(
+    (requestId: string, status: "allowed" | "denied") => {
+      setMessages((prev) => {
+        const updated = [...prev];
+        for (let i = updated.length - 1; i >= 0; i--) {
+          const msg = updated[i];
+          const blockIdx = msg.blocks.findIndex(
+            (b) => b.type === "permission_request" && b.requestId === requestId
+          );
+          if (blockIdx !== -1) {
+            const newBlocks = [...msg.blocks];
+            const block = newBlocks[blockIdx];
+            if (block.type === "permission_request") {
+              newBlocks[blockIdx] = { ...block, status };
+            }
+            updated[i] = { ...msg, blocks: newBlocks };
+            break;
+          }
+        }
+        return updated;
+      });
+    },
+    []
+  );
 
   // 从历史消息文本中提取附件信息
   function parseAttachmentsFromText(text: string): {
@@ -399,5 +440,6 @@ export function useMessages() {
     handleServerMessage,
     clearMessages,
     loadHistoryMessages,
+    updatePermissionStatus,
   };
 }

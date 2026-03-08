@@ -10,9 +10,22 @@ export interface SessionInfo {
   abortController: AbortController;
   queryHandle: Query | null;
   completedAt: number | null;
+  pendingPermissions: Map<string, {
+    resolve: (result: { behavior: "allow" } | { behavior: "deny"; message: string }) => void;
+  }>;
 }
 
 export type MessageCallback = (msg: unknown) => void;
+
+export interface PermissionRequestInfo {
+  requestId: string;
+  toolName: string;
+  input: Record<string, unknown>;
+  decisionReason?: string;
+  description?: string;
+}
+
+export type PermissionRequestCallback = (info: PermissionRequestInfo) => void;
 
 export interface SessionOptions {
   model?: string;
@@ -47,6 +60,7 @@ export class ClaudeSessionManager {
   private markCompleted(sessionId: string) {
     const session = this.sessions.get(sessionId);
     if (!session) return;
+    this.denyAllPendingPermissions(sessionId);
     session.isActive = false;
     session.queryHandle = null;
     session.completedAt = Date.now();
@@ -79,6 +93,7 @@ export class ClaudeSessionManager {
     onMessage: MessageCallback,
     onComplete: () => void,
     onError: (err: Error) => void,
+    onPermissionRequest: PermissionRequestCallback,
     resumeSessionId?: string,
     options?: SessionOptions
   ): Promise<string> {
@@ -92,6 +107,7 @@ export class ClaudeSessionManager {
       abortController,
       queryHandle: null,
       completedAt: null,
+      pendingPermissions: new Map(),
     };
     this.sessions.set(sessionId, session);
 
@@ -122,6 +138,26 @@ export class ClaudeSessionManager {
         permissionMode: "acceptEdits",
         maxTurns: 50,
         includePartialMessages: true,
+        canUseTool: async (toolName, input, opts) => {
+          return new Promise((resolve) => {
+            const requestId = opts.toolUseID;
+            session.pendingPermissions.set(requestId, { resolve });
+
+            onPermissionRequest({
+              requestId,
+              toolName,
+              input,
+              decisionReason: opts.decisionReason,
+            });
+
+            opts.signal.addEventListener("abort", () => {
+              if (session.pendingPermissions.has(requestId)) {
+                session.pendingPermissions.delete(requestId);
+                resolve({ behavior: "deny", message: "Request aborted" });
+              }
+            });
+          });
+        },
       },
     });
 
@@ -187,6 +223,28 @@ export class ClaudeSessionManager {
       session.abortController.abort();
       this.markCompleted(sessionId);
     }
+  }
+
+  resolvePermission(sessionId: string, requestId: string, behavior: "allow" | "deny") {
+    const session = this.sessions.get(sessionId);
+    const pending = session?.pendingPermissions.get(requestId);
+    if (pending) {
+      session!.pendingPermissions.delete(requestId);
+      if (behavior === "allow") {
+        pending.resolve({ behavior: "allow" });
+      } else {
+        pending.resolve({ behavior: "deny", message: "Denied by user" });
+      }
+    }
+  }
+
+  denyAllPendingPermissions(sessionId: string) {
+    const session = this.sessions.get(sessionId);
+    if (!session) return;
+    for (const [id, pending] of session.pendingPermissions) {
+      pending.resolve({ behavior: "deny", message: "Session ended" });
+    }
+    session.pendingPermissions.clear();
   }
 
   getActiveSession(): SessionInfo | undefined {

@@ -4,15 +4,17 @@ import { FileText, X } from "lucide-react";
 import type { ChatMessage, DisplayBlock, AttachmentInfo } from "../types/messages";
 import { ToolCallCard } from "./ToolCallCard";
 import { ThinkingBlock } from "./ThinkingBlock";
+import { PermissionCard } from "./PermissionCard";
 import { MarkdownRenderer } from "./MarkdownRenderer";
 import { Avatar, AvatarFallback } from "./ui/avatar";
 import { cn } from "@/lib/utils";
 
 interface Props {
   message: ChatMessage;
+  onPermissionRespond?: (requestId: string, behavior: "allow" | "deny") => void;
 }
 
-export function MessageBubble({ message }: Props) {
+export function MessageBubble({ message, onPermissionRespond }: Props) {
   const isUser = message.role === "user";
 
   return (
@@ -33,7 +35,7 @@ export function MessageBubble({ message }: Props) {
         )}
       >
         {message.blocks.map((block, i) => (
-          <BlockRenderer key={i} block={block} isUser={isUser} />
+          <BlockRenderer key={i} block={block} isUser={isUser} onPermissionRespond={onPermissionRespond} />
         ))}
         {message.isStreaming && <span className="streaming-cursor" />}
         {message.attachments && message.attachments.length > 0 && (
@@ -44,7 +46,15 @@ export function MessageBubble({ message }: Props) {
   );
 }
 
-function BlockRenderer({ block, isUser }: { block: DisplayBlock; isUser: boolean }) {
+function BlockRenderer({
+  block,
+  isUser,
+  onPermissionRespond,
+}: {
+  block: DisplayBlock;
+  isUser: boolean;
+  onPermissionRespond?: (requestId: string, behavior: "allow" | "deny") => void;
+}) {
   switch (block.type) {
     case "text":
       return (
@@ -65,6 +75,18 @@ function BlockRenderer({ block, isUser }: { block: DisplayBlock; isUser: boolean
           result={block.result}
           isError={block.isError}
           collapsed={block.collapsed}
+        />
+      );
+    case "permission_request":
+      return (
+        <PermissionCard
+          requestId={block.requestId}
+          toolName={block.toolName}
+          input={block.input}
+          status={block.status}
+          decisionReason={block.decisionReason}
+          description={block.description}
+          onRespond={onPermissionRespond || (() => {})}
         />
       );
     default:

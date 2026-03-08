@@ -31,6 +31,7 @@ export default function App() {
     handleServerMessage,
     clearMessages,
     loadHistoryMessages,
+    updatePermissionStatus,
   } = useMessages();
   const {
     threads,
@@ -117,6 +118,22 @@ export default function App() {
     [capabilities, updatePreference, ws]
   );
 
+  const handleSetPermissionMode = useCallback(
+    (mode: import("./types/messages").PermissionMode) => {
+      capabilities.setCurrentPermissionMode(mode);
+      ws.setPermissionMode(mode);
+    },
+    [capabilities, ws]
+  );
+
+  const handlePermissionRespond = useCallback(
+    (requestId: string, behavior: "allow" | "deny") => {
+      ws.sendPermissionResponse(requestId, behavior);
+      updatePermissionStatus(requestId, behavior === "allow" ? "allowed" : "denied");
+    },
+    [ws, updatePermissionStatus]
+  );
+
   const handleSend = async (prompt: string) => {
     // 上传附件
     let finalPrompt = prompt;
@@ -181,6 +198,9 @@ export default function App() {
       mcpServers={capabilities.mcpServers}
       currentModel={capabilities.currentModel}
       onSetModel={handleSetModel}
+      currentPermissionMode={capabilities.currentPermissionMode}
+      onSetPermissionMode={handleSetPermissionMode}
+      onPermissionRespond={handlePermissionRespond}
       attachments={attachments.attachments}
       onAddAttachments={attachments.addAttachments}
       onRemoveAttachment={attachments.removeAttachment}

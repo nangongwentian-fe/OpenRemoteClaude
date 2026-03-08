@@ -68,7 +68,8 @@ export type ClientMessage =
   | { type: "ping" }
   | { type: "set_model"; payload: { model: string } }
   | { type: "set_permission_mode"; payload: { mode: PermissionMode } }
-  | { type: "request_capabilities" };
+  | { type: "request_capabilities" }
+  | { type: "permission_response"; payload: { requestId: string; behavior: "allow" | "deny" } };
 
 // 服务端 → 客户端
 export type ServerMessage =
@@ -128,7 +129,17 @@ export type ServerMessage =
   | { type: "interrupted"; payload: Record<string, never> }
   | { type: "aborted"; payload: Record<string, never> }
   | { type: "error"; payload: { message: string } }
-  | { type: "pong" };
+  | { type: "pong" }
+  | {
+      type: "permission_request";
+      payload: {
+        requestId: string;
+        toolName: string;
+        input: Record<string, unknown>;
+        decisionReason?: string;
+        description?: string;
+      };
+    };
 
 // 内容块类型
 export type ContentBlock =
@@ -158,6 +169,15 @@ export type DisplayBlock =
       result?: string;
       isError?: boolean;
       collapsed: boolean;
+    }
+  | {
+      type: "permission_request";
+      requestId: string;
+      toolName: string;
+      input: Record<string, unknown>;
+      status: "pending" | "allowed" | "denied";
+      decisionReason?: string;
+      description?: string;
     };
 
 // 连接状态

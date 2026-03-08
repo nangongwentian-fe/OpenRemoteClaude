@@ -154,6 +154,13 @@ export function useWebSocket(
     sendRaw({ type: "abort" });
   }, [sendRaw]);
 
+  const sendPermissionResponse = useCallback(
+    (requestId: string, behavior: "allow" | "deny") => {
+      sendRaw({ type: "permission_response", payload: { requestId, behavior } });
+    },
+    [sendRaw]
+  );
+
   // token 变化时重新连接
   useEffect(() => {
     if (token) {
@@ -173,6 +180,7 @@ export function useWebSocket(
     setModel,
     setPermissionMode,
     requestCapabilities,
+    sendPermissionResponse,
     sendRaw,
   };
 }

@@ -13,7 +13,7 @@ import { MessageList } from "../components/MessageList";
 import { InputBar } from "../components/InputBar";
 import { ThreadSidebar } from "../components/ThreadSidebar";
 import { useSidebarPin } from "../hooks/useSidebarPin";
-import type { ConnectionStatus, ChatMessage, Thread, ModelInfo, McpServerInfo, SlashCommandInfo, SessionPreferences, Attachment, Project } from "../types/messages";
+import type { ConnectionStatus, ChatMessage, Thread, ModelInfo, McpServerInfo, SlashCommandInfo, SessionPreferences, PermissionMode, Attachment, Project } from "../types/messages";
 import type { Theme } from "../hooks/useTheme";
 
 interface Props {
@@ -39,6 +39,11 @@ interface Props {
   mcpServers: McpServerInfo[];
   currentModel: string;
   onSetModel: (model: string) => void;
+  // 权限模式
+  currentPermissionMode: PermissionMode;
+  onSetPermissionMode: (mode: PermissionMode) => void;
+  // 权限审批
+  onPermissionRespond: (requestId: string, behavior: "allow" | "deny") => void;
   // 附件
   attachments: Attachment[];
   onAddAttachments: (files: FileList) => void;
@@ -73,6 +78,9 @@ export function Chat({
   mcpServers,
   currentModel,
   onSetModel,
+  currentPermissionMode,
+  onSetPermissionMode,
+  onPermissionRespond,
   attachments,
   onAddAttachments,
   onRemoveAttachment,
@@ -250,7 +258,7 @@ export function Chat({
               </div>
             </div>
           )}
-          <MessageList messages={messages} />
+          <MessageList messages={messages} onPermissionRespond={onPermissionRespond} />
           <div ref={bottomRef} />
         </main>
 
@@ -267,6 +275,8 @@ export function Chat({
           mcpServers={mcpServers}
           currentModel={currentModel}
           onSetModel={onSetModel}
+          currentPermissionMode={currentPermissionMode}
+          onSetPermissionMode={onSetPermissionMode}
           attachments={attachments}
           onAddAttachments={onAddAttachments}
           onRemoveAttachment={onRemoveAttachment}
