@@ -11,13 +11,15 @@ import { useProjects } from "./hooks/useProjects";
 import { Login } from "./pages/Login";
 import { Chat } from "./pages/Chat";
 import { ProjectManager } from "./components/ProjectManager";
-import type { ServerMessage, Project } from "./types/messages";
+import type { ServerMessage, Project, ModelInfo } from "./types/messages";
+
+const MODEL_CHOSEN_KEY = "rcc_model_chosen";
 
 export default function App() {
   const { theme, resolved, setTheme } = useTheme();
   const auth = useAuth();
   const { preferences, updatePreference } = usePreferences();
-  const capabilities = useCapabilities();
+  const capabilities = useCapabilities(preferences.model);
   const attachments = useAttachments();
   const projectsHook = useProjects(auth.token);
   const [projectManagerOpen, setProjectManagerOpen] = useState(false);
@@ -43,6 +45,8 @@ export default function App() {
   // 当收到 chat_complete 时刷新 thread 列表
   const fetchThreadsRef = useRef(fetchThreads);
   fetchThreadsRef.current = fetchThreads;
+  const updatePreferenceRef = useRef(updatePreference);
+  updatePreferenceRef.current = updatePreference;
 
   const wrappedHandler = useCallback(
     (msg: ServerMessage) => {
@@ -55,9 +59,22 @@ export default function App() {
       }
       if (msg.type === "capabilities") {
         capabilities.handleCapabilities(msg.payload);
+        // 用户从未手动选过模型时，自动选择最新的 Sonnet 模型
+        const userHasChosen = localStorage.getItem(MODEL_CHOSEN_KEY) === "true";
+        if (!userHasChosen && msg.payload.models?.length > 0) {
+          const latestSonnet = (msg.payload.models as ModelInfo[]).find((m) =>
+            m.displayName?.toLowerCase().includes("sonnet")
+          );
+          const autoModel = latestSonnet || msg.payload.models[0];
+          if (autoModel) {
+            capabilities.setCurrentModel(autoModel.value);
+            updatePreferenceRef.current("model", autoModel.value);
+          }
+        }
       }
       if (msg.type === "model_changed") {
         capabilities.setCurrentModel(msg.payload.model);
+        updatePreferenceRef.current("model", msg.payload.model);
       }
       if (msg.type === "permission_mode_changed") {
         capabilities.setCurrentPermissionMode(msg.payload.mode);
@@ -66,7 +83,7 @@ export default function App() {
     [handleServerMessage, capabilities]
   );
 
-  const ws = useWebSocket(auth.token, wrappedHandler);
+  const ws = useWebSocket(auth.token, wrappedHandler, auth.logout);
 
   // 当 SDK 返回 sessionId 且当前没有 activeThreadId 时，更新 activeThreadId
   useEffect(() => {
@@ -89,6 +106,16 @@ export default function App() {
       />
     );
   }
+
+  const handleSetModel = useCallback(
+    (model: string) => {
+      capabilities.setCurrentModel(model);
+      updatePreference("model", model);
+      localStorage.setItem(MODEL_CHOSEN_KEY, "true");
+      ws.setModel(model);
+    },
+    [capabilities, updatePreference, ws]
+  );
 
   const handleSend = async (prompt: string) => {
     // 上传附件
@@ -151,7 +178,7 @@ export default function App() {
       commands={capabilities.commands}
       mcpServers={capabilities.mcpServers}
       currentModel={capabilities.currentModel}
-      onSetModel={ws.setModel}
+      onSetModel={handleSetModel}
       attachments={attachments.attachments}
       onAddAttachments={attachments.addAttachments}
       onRemoveAttachment={attachments.removeAttachment}

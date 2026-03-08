@@ -12,7 +12,8 @@ const HEARTBEAT_INTERVAL = 30_000;
 
 export function useWebSocket(
   token: string | null,
-  onMessage: (msg: ServerMessage) => void
+  onMessage: (msg: ServerMessage) => void,
+  onAuthFailed?: () => void
 ) {
   const [status, setStatus] = useState<ConnectionStatus>("disconnected");
   const wsRef = useRef<WebSocket | null>(null);
@@ -21,6 +22,8 @@ export function useWebSocket(
   const heartbeatTimer = useRef<ReturnType<typeof setInterval>>(undefined);
   const onMessageRef = useRef(onMessage);
   onMessageRef.current = onMessage;
+  const onAuthFailedRef = useRef(onAuthFailed);
+  onAuthFailedRef.current = onAuthFailed;
 
   const cleanup = useCallback(() => {
     if (heartbeatTimer.current) clearInterval(heartbeatTimer.current);
@@ -59,10 +62,18 @@ export function useWebSocket(
     ws.onmessage = (event) => {
       try {
         const msg = JSON.parse(event.data) as ServerMessage;
-        if (msg.type === "auth_result" && msg.payload.success) {
-          setStatus("authenticated");
-          // 认证成功后请求 capabilities（重连时也能获取 models）
-          ws.send(JSON.stringify({ type: "request_capabilities" }));
+        if (msg.type === "auth_result") {
+          if (msg.payload.success) {
+            setStatus("authenticated");
+            // 认证成功后请求 capabilities（重连时也能获取 models）
+            ws.send(JSON.stringify({ type: "request_capabilities" }));
+          } else {
+            // 认证失败：阻止重连并通知上层清除无效 token
+            reconnectAttempts.current = MAX_RECONNECT_ATTEMPTS;
+            ws.close();
+            onAuthFailedRef.current?.();
+            return;
+          }
         }
         onMessageRef.current(msg);
       } catch {}

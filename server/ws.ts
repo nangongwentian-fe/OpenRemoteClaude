@@ -351,6 +351,34 @@ export function createWSHandlers(jwtSecret: string, db: DataStore) {
           const session = sessionManager.getAnySessionWithHandle();
           if (session) {
             await sendCapabilities(ws, session.id);
+          } else {
+            // 无活跃 session 时通过探测获取 capabilities
+            try {
+              const caps = await sessionManager.probeCapabilities(process.cwd());
+              if (caps) {
+                send(ws, {
+                  type: "capabilities",
+                  payload: {
+                    models: (caps.models as Array<Record<string, unknown>>).map((m) => ({
+                      value: m.value,
+                      displayName: m.displayName,
+                      description: m.description,
+                      supportsEffort: m.supportsEffort,
+                      supportedEffortLevels: m.supportedEffortLevels,
+                      supportsAdaptiveThinking: m.supportsAdaptiveThinking,
+                      supportsFastMode: m.supportsFastMode,
+                    })),
+                    commands: (caps.commands as Array<Record<string, unknown>>).map((c) => ({
+                      name: (c as Record<string, unknown>).name ?? (c as Record<string, unknown>).command ?? c,
+                      description: (c as Record<string, unknown>).description,
+                    })),
+                    mcpServers: [],
+                  },
+                });
+              }
+            } catch {
+              // probe 失败不影响正常使用
+            }
           }
           break;
         }

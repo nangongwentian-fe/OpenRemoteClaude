@@ -6,11 +6,24 @@ import type {
   PermissionMode,
 } from "../types/messages";
 
-export function useCapabilities() {
-  const [models, setModels] = useState<ModelInfo[]>([]);
+const MODELS_CACHE_KEY = "rcc_models";
+
+function loadCachedModels(): ModelInfo[] {
+  try {
+    const cached = localStorage.getItem(MODELS_CACHE_KEY);
+    if (cached) {
+      const models = JSON.parse(cached);
+      if (Array.isArray(models) && models.length > 0) return models;
+    }
+  } catch {}
+  return [];
+}
+
+export function useCapabilities(initialModel?: string) {
+  const [models, setModels] = useState<ModelInfo[]>(loadCachedModels);
   const [commands, setCommands] = useState<SlashCommandInfo[]>([]);
   const [mcpServers, setMcpServers] = useState<McpServerInfo[]>([]);
-  const [currentModel, setCurrentModel] = useState("");
+  const [currentModel, setCurrentModel] = useState(initialModel || "");
   const [currentPermissionMode, setCurrentPermissionMode] = useState<PermissionMode>("acceptEdits");
 
   const handleSystemInit = useCallback(
@@ -36,6 +49,10 @@ export function useCapabilities() {
       setModels(payload.models);
       setCommands(payload.commands);
       setMcpServers(payload.mcpServers);
+      // 缓存模型列表到 localStorage
+      try {
+        localStorage.setItem(MODELS_CACHE_KEY, JSON.stringify(payload.models));
+      } catch {}
     },
     []
   );

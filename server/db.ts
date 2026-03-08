@@ -93,6 +93,19 @@ export class DataStore {
       .run(sessionId, role, JSON.stringify(content));
   }
 
+  getJwtSecret(): string | null {
+    const row = this.db
+      .query("SELECT value FROM config WHERE key = ?")
+      .get("jwt_secret") as { value: string } | null;
+    return row?.value ?? null;
+  }
+
+  setJwtSecret(secret: string) {
+    this.db
+      .query("INSERT OR REPLACE INTO config (key, value) VALUES (?, ?)")
+      .run("jwt_secret", secret);
+  }
+
   getProjects(): Array<{ path: string; name: string; addedAt: number }> {
     const row = this.db
       .query("SELECT value FROM config WHERE key = ?")

@@ -11,12 +11,25 @@ import { createUploadRoutes } from "./upload";
 import { createProjectRoutes } from "./projects";
 import { launchTunnel, getTunnelInfo, stopTunnel } from "./tunnel";
 
+import { existsSync } from "node:fs";
+
 const PORT = parseInt(process.env.PORT || "3456");
-const JWT_SECRET = process.env.RCC_JWT_SECRET || crypto.randomUUID();
 const ENABLE_TUNNEL = process.env.NO_TUNNEL !== "1";
+const VITE_PORT = 5173;
+const IS_DEV = !existsSync("./dist/client/index.html");
 
 // 初始化
 const db = new DataStore();
+
+// JWT_SECRET: 优先环境变量 > DB 持久化 > 新生成并存入 DB
+const JWT_SECRET = (() => {
+  if (process.env.RCC_JWT_SECRET) return process.env.RCC_JWT_SECRET;
+  const stored = db.getJwtSecret();
+  if (stored) return stored;
+  const newSecret = crypto.randomUUID();
+  db.setJwtSecret(newSecret);
+  return newSecret;
+})();
 const app = new Hono();
 const { upgradeWebSocket, websocket } = createBunWebSocket();
 
@@ -79,7 +92,9 @@ console.log(`[Server] Running at http://localhost:${server.port}`);
 
 // 启动 Cloudflare Tunnel
 if (ENABLE_TUNNEL) {
-  launchTunnel(server.port)
+  // dev 模式下指向 Vite 端口（Vite 已配置 proxy 转发 /api 和 /ws）
+  const tunnelPort = IS_DEV ? VITE_PORT : PORT;
+  launchTunnel(tunnelPort)
     .then((url) => {
       console.log(`\n========================================`);
       console.log(`  Remote access: ${url}`);

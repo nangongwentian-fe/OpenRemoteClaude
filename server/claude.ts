@@ -154,4 +154,35 @@ export class ClaudeSessionManager {
   isSessionActive(sessionId: string): boolean {
     return this.sessions.get(sessionId)?.isActive ?? false;
   }
+
+  /**
+   * 创建一个轻量级探测 session 获取 capabilities（模型列表等），然后立即 abort。
+   * 用于在没有活跃 session 时获取可用模型信息。
+   */
+  async probeCapabilities(cwd: string): Promise<{ models: unknown[]; commands: unknown[]; mcpServers: unknown[] } | null> {
+    const abortController = new AbortController();
+    try {
+      const q = query({
+        prompt: "hi",
+        options: {
+          cwd,
+          abortController,
+          maxTurns: 1,
+          permissionMode: "plan",
+          allowedTools: [],
+        },
+      });
+
+      const initResult = await q.initializationResult();
+      abortController.abort();
+      return {
+        models: initResult.models,
+        commands: initResult.commands,
+        mcpServers: [],
+      };
+    } catch {
+      abortController.abort();
+      return null;
+    }
+  }
 }
