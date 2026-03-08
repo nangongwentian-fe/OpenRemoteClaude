@@ -1,11 +1,15 @@
 import { query, type Query } from "@anthropic-ai/claude-agent-sdk";
 
+const SESSION_CLEANUP_DELAY_MS = 60_000; // 完成后 60 秒清除
+const SESSION_CLEANUP_INTERVAL_MS = 120_000; // 每 2 分钟扫描一次
+
 export interface SessionInfo {
   id: string;
   cwd: string;
   isActive: boolean;
   abortController: AbortController;
   queryHandle: Query | null;
+  completedAt: number | null;
 }
 
 export type MessageCallback = (msg: unknown) => void;
@@ -18,6 +22,56 @@ export interface SessionOptions {
 
 export class ClaudeSessionManager {
   private sessions = new Map<string, SessionInfo>();
+  private cleanupTimer: ReturnType<typeof setInterval>;
+
+  constructor() {
+    this.cleanupTimer = setInterval(() => {
+      this.sweepExpiredSessions();
+    }, SESSION_CLEANUP_INTERVAL_MS);
+  }
+
+  private sweepExpiredSessions() {
+    const now = Date.now();
+    for (const [id, session] of this.sessions) {
+      if (
+        session.completedAt !== null &&
+        now - session.completedAt > SESSION_CLEANUP_DELAY_MS
+      ) {
+        session.queryHandle = null;
+        this.sessions.delete(id);
+        console.log(`[Session] Cleaned up expired session ${id}`);
+      }
+    }
+  }
+
+  private markCompleted(sessionId: string) {
+    const session = this.sessions.get(sessionId);
+    if (!session) return;
+    session.isActive = false;
+    session.queryHandle = null;
+    session.completedAt = Date.now();
+  }
+
+  dispose() {
+    clearInterval(this.cleanupTimer);
+    for (const [, session] of this.sessions) {
+      if (session.isActive) {
+        session.abortController.abort();
+      }
+      session.queryHandle = null;
+    }
+    this.sessions.clear();
+    console.log("[Session] All sessions disposed");
+  }
+
+  abortIfActive(sessionId: string) {
+    const session = this.sessions.get(sessionId);
+    if (session?.isActive) {
+      session.abortController.abort();
+      this.markCompleted(sessionId);
+      console.log(`[Session] Aborted orphan session ${sessionId}`);
+    }
+  }
 
   async startSession(
     prompt: string,
@@ -37,6 +91,7 @@ export class ClaudeSessionManager {
       isActive: true,
       abortController,
       queryHandle: null,
+      completedAt: null,
     };
     this.sessions.set(sessionId, session);
 
@@ -82,7 +137,7 @@ export class ClaudeSessionManager {
       } catch (err) {
         onError(err instanceof Error ? err : new Error(String(err)));
       } finally {
-        session.isActive = false;
+        this.markCompleted(sessionId);
       }
     })();
 
@@ -130,7 +185,7 @@ export class ClaudeSessionManager {
     const session = this.sessions.get(sessionId);
     if (session) {
       session.abortController.abort();
-      session.isActive = false;
+      this.markCompleted(sessionId);
     }
   }
 
@@ -145,9 +200,6 @@ export class ClaudeSessionManager {
     for (const session of this.sessions.values()) {
       if (session.isActive && session.queryHandle) return session;
     }
-    for (const session of this.sessions.values()) {
-      if (session.queryHandle) return session;
-    }
     return undefined;
   }
 
@@ -161,8 +213,9 @@ export class ClaudeSessionManager {
    */
   async probeCapabilities(cwd: string): Promise<{ models: unknown[]; commands: unknown[]; mcpServers: unknown[] } | null> {
     const abortController = new AbortController();
+    let q: Query | null = null;
     try {
-      const q = query({
+      q = query({
         prompt: "hi",
         options: {
           cwd,
@@ -174,15 +227,16 @@ export class ClaudeSessionManager {
       });
 
       const initResult = await q.initializationResult();
-      abortController.abort();
       return {
         models: initResult.models,
         commands: initResult.commands,
         mcpServers: [],
       };
     } catch {
-      abortController.abort();
       return null;
+    } finally {
+      abortController.abort();
+      q = null;
     }
   }
 }

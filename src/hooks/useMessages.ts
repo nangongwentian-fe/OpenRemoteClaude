@@ -15,6 +15,8 @@ export function useMessages() {
     toolInputs: Map<number, string>;
     finalizedBlocks: DisplayBlock[];
   }>({ blocks: [], toolInputs: new Map(), finalizedBlocks: [] });
+  const rafIdRef = useRef<number>(0);
+  const pendingBlocksRef = useRef<DisplayBlock[] | null>(null);
 
   const addUserMessage = useCallback((prompt: string, attachments?: AttachmentInfo[]) => {
     const msg: ChatMessage = {
@@ -201,6 +203,12 @@ export function useMessages() {
       case "result":
       case "chat_complete": {
         setIsProcessing(false);
+        // 取消未执行的 rAF，确保最终状态一致
+        if (rafIdRef.current) {
+          cancelAnimationFrame(rafIdRef.current);
+          rafIdRef.current = 0;
+          pendingBlocksRef.current = null;
+        }
         streamingRef.current = { blocks: [], toolInputs: new Map(), finalizedBlocks: [] };
         setMessages((prev) => {
           const updated = [...prev];
@@ -234,21 +242,29 @@ export function useMessages() {
   }, []);
 
   function updateLastAssistant(blocks: DisplayBlock[]) {
-    const finalized = streamingRef.current.finalizedBlocks;
-    setMessages((prev) => {
-      const updated = [...prev];
-      const lastIdx = updated.length - 1;
-      if (lastIdx >= 0 && updated[lastIdx].role === "assistant") {
-        updated[lastIdx] = {
-          ...updated[lastIdx],
-          blocks: [
-            ...finalized.map((b) => ({ ...b })),
-            ...blocks.filter(Boolean).map((b) => ({ ...b })),
-          ],
-        };
-      }
-      return updated;
-    });
+    pendingBlocksRef.current = blocks;
+
+    if (!rafIdRef.current) {
+      rafIdRef.current = requestAnimationFrame(() => {
+        rafIdRef.current = 0;
+        const pending = pendingBlocksRef.current;
+        if (!pending) return;
+        pendingBlocksRef.current = null;
+
+        const finalized = streamingRef.current.finalizedBlocks;
+        setMessages((prev) => {
+          const lastIdx = prev.length - 1;
+          if (lastIdx < 0 || prev[lastIdx].role !== "assistant") return prev;
+
+          const updated = [...prev];
+          updated[lastIdx] = {
+            ...prev[lastIdx],
+            blocks: [...finalized, ...pending.filter(Boolean)],
+          };
+          return updated;
+        });
+      });
+    }
   }
 
   const clearMessages = useCallback(() => {

@@ -3,6 +3,8 @@ import { ClaudeSessionManager, type SessionOptions } from "./claude";
 import { DataStore } from "./db";
 import type { ServerWebSocket } from "bun";
 
+const DISCONNECT_ABORT_DELAY_MS = 30_000; // 断连 30 秒后 abort 进行中的 session
+
 // SDK 消息类型（简化定义，运行时用 type 字段判断）
 interface SDKMessage {
   type: string;
@@ -16,6 +18,8 @@ interface WSState {
 }
 
 const sessionManager = new ClaudeSessionManager();
+
+export { sessionManager };
 
 function send(ws: ServerWebSocket<WSState>, data: unknown) {
   if (ws.readyState === 1) {
@@ -190,6 +194,8 @@ async function sendCapabilities(ws: ServerWebSocket<WSState>, sessionId: string)
 }
 
 export function createWSHandlers(jwtSecret: string, db: DataStore) {
+  const disconnectTimers = new Map<string, ReturnType<typeof setTimeout>>();
+
   return {
     open(ws: ServerWebSocket<WSState>) {
       send(ws, {
@@ -271,6 +277,15 @@ export function createWSHandlers(jwtSecret: string, db: DataStore) {
 
           send(ws, { type: "chat_started", payload: { cwd } });
 
+          // 如果在恢复之前有断连定时器，取消它
+          if (payload.resumeSessionId) {
+            const timer = disconnectTimers.get(payload.resumeSessionId);
+            if (timer) {
+              clearTimeout(timer);
+              disconnectTimers.delete(payload.resumeSessionId);
+            }
+          }
+
           try {
             const sessionId = await sessionManager.startSession(
               payload.prompt,
@@ -278,6 +293,11 @@ export function createWSHandlers(jwtSecret: string, db: DataStore) {
               (msg) => forwardSDKMessage(ws, msg as SDKMessage),
               () => {
                 ws.data.activeSessionId = null;
+                const timer = disconnectTimers.get(sessionId);
+                if (timer) {
+                  clearTimeout(timer);
+                  disconnectTimers.delete(sessionId);
+                }
                 send(ws, {
                   type: "chat_complete",
                   payload: { sessionId },
@@ -286,6 +306,11 @@ export function createWSHandlers(jwtSecret: string, db: DataStore) {
               },
               (err) => {
                 ws.data.activeSessionId = null;
+                const timer = disconnectTimers.get(sessionId);
+                if (timer) {
+                  clearTimeout(timer);
+                  disconnectTimers.delete(sessionId);
+                }
                 send(ws, {
                   type: "error",
                   payload: { message: err.message },
@@ -411,8 +436,19 @@ export function createWSHandlers(jwtSecret: string, db: DataStore) {
     },
 
     close(ws: ServerWebSocket<WSState>) {
-      // 连接断开时不中断 Claude 会话（可能只是网络抖动）
       console.log(`[WS] Client disconnected: ${ws.data.clientId}`);
+
+      const activeSessionId = ws.data.activeSessionId;
+      if (activeSessionId && !disconnectTimers.has(activeSessionId)) {
+        disconnectTimers.set(
+          activeSessionId,
+          setTimeout(() => {
+            console.log(`[WS] Client did not reconnect, aborting session ${activeSessionId}`);
+            sessionManager.abortIfActive(activeSessionId);
+            disconnectTimers.delete(activeSessionId);
+          }, DISCONNECT_ABORT_DELAY_MS)
+        );
+      }
     },
   };
 }

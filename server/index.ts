@@ -5,7 +5,7 @@ import { serveStatic } from "hono/bun";
 import { createBunWebSocket } from "hono/bun";
 import { DataStore } from "./db";
 import { createAuthRoutes } from "./auth";
-import { createWSHandlers, type WSState } from "./ws";
+import { createWSHandlers, sessionManager, type WSState } from "./ws";
 import { createThreadRoutes } from "./threads";
 import { createUploadRoutes } from "./upload";
 import { createProjectRoutes } from "./projects";
@@ -118,12 +118,14 @@ if (ENABLE_TUNNEL) {
 // 优雅关闭
 process.on("SIGINT", () => {
   console.log("\n[Server] Shutting down...");
+  sessionManager.dispose();
   stopTunnel();
   db.close();
   process.exit(0);
 });
 
 process.on("SIGTERM", () => {
+  sessionManager.dispose();
   stopTunnel();
   db.close();
   process.exit(0);
