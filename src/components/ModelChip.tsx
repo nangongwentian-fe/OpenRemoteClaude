@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { Cpu, Check } from "lucide-react";
 import {
   DropdownMenu,
@@ -5,6 +6,7 @@ import {
   DropdownMenuContent,
   DropdownMenuItem,
 } from "./ui/dropdown-menu";
+import { Tooltip, TooltipTrigger, TooltipContent } from "./ui/tooltip";
 import type { ModelInfo } from "@/types/messages";
 
 // 从模型 ID 提取简称
@@ -29,20 +31,26 @@ interface Props {
 }
 
 export function ModelChip({ currentModel, models, onSelect, disabled }: Props) {
+  const [dropdownOpen, setDropdownOpen] = useState(false);
   const current = models.find((m) => m.value === currentModel);
   const label = shortName(currentModel, current?.displayName);
 
   return (
-    <DropdownMenu>
-      <DropdownMenuTrigger disabled={disabled || models.length === 0} asChild>
-        <button
-          className="inline-flex items-center gap-1 rounded-lg border border-(--color-overlay-border) bg-(--color-overlay) px-2 py-1 text-[11px] text-muted-foreground hover:bg-(--color-overlay-hover) hover:text-foreground transition-colors cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
-        >
-          <Cpu className="size-3" />
-          {label}
-        </button>
-      </DropdownMenuTrigger>
-      <DropdownMenuContent align="start" className="min-w-[160px]">
+    <DropdownMenu open={dropdownOpen} onOpenChange={setDropdownOpen}>
+      <Tooltip open={dropdownOpen ? false : undefined}>
+        <TooltipTrigger asChild>
+          <DropdownMenuTrigger disabled={disabled || models.length === 0} asChild>
+            <button
+              className="inline-flex items-center gap-1 rounded-lg border border-(--color-overlay-border) bg-(--color-overlay) px-2 py-1 text-[11px] text-muted-foreground hover:bg-(--color-overlay-hover) hover:text-foreground transition-colors cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
+            >
+              <Cpu className="size-3" />
+              {label}
+            </button>
+          </DropdownMenuTrigger>
+        </TooltipTrigger>
+        <TooltipContent>Model</TooltipContent>
+      </Tooltip>
+      <DropdownMenuContent align="start" className="min-w-40" onCloseAutoFocus={(e) => e.preventDefault()}>
         {models.map((m) => (
           <DropdownMenuItem
             key={m.value}

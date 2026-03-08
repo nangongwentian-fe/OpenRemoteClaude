@@ -1,6 +1,7 @@
 import type { ChatMessage, DisplayBlock } from "../types/messages";
 import { ToolCallCard } from "./ToolCallCard";
 import { ThinkingBlock } from "./ThinkingBlock";
+import { MarkdownRenderer } from "./MarkdownRenderer";
 import { Avatar, AvatarFallback } from "./ui/avatar";
 import { cn } from "@/lib/utils";
 
@@ -29,7 +30,7 @@ export function MessageBubble({ message }: Props) {
         )}
       >
         {message.blocks.map((block, i) => (
-          <BlockRenderer key={i} block={block} />
+          <BlockRenderer key={i} block={block} isUser={isUser} />
         ))}
         {message.isStreaming && <span className="streaming-cursor" />}
       </div>
@@ -37,10 +38,15 @@ export function MessageBubble({ message }: Props) {
   );
 }
 
-function BlockRenderer({ block }: { block: DisplayBlock }) {
+function BlockRenderer({ block, isUser }: { block: DisplayBlock; isUser: boolean }) {
   switch (block.type) {
     case "text":
-      return <TextContent text={block.text} />;
+      return (
+        <MarkdownRenderer
+          text={block.text}
+          variant={isUser ? "user" : "assistant"}
+        />
+      );
     case "thinking":
       return (
         <ThinkingBlock thinking={block.thinking} collapsed={block.collapsed} />
@@ -58,41 +64,4 @@ function BlockRenderer({ block }: { block: DisplayBlock }) {
     default:
       return null;
   }
-}
-
-function TextContent({ text }: { text: string }) {
-  if (!text) return null;
-
-  const parts = text.split(/(```[\s\S]*?```)/g);
-  return (
-    <div className="leading-relaxed wrap-break-word">
-      {parts.map((part, i) => {
-        if (part.startsWith("```")) {
-          const lines = part.slice(3, -3).split("\n");
-          const lang = lines[0] || "";
-          const code = lines.slice(1).join("\n") || lines.join("\n");
-          return (
-            <pre key={i} className="bg-(--color-code-bg) backdrop-blur-sm rounded-xl p-3.5 my-2.5 overflow-x-auto font-mono text-[13px] leading-normal border border-(--color-code-border)">
-              {lang && <div className="text-muted-foreground/60 text-[11px] mb-2 font-sans font-medium uppercase tracking-wider">{lang}</div>}
-              <code>{code}</code>
-            </pre>
-          );
-        }
-        const inlineParts = part.split(/(`[^`]+`)/g);
-        return (
-          <span key={i}>
-            {inlineParts.map((p, j) =>
-              p.startsWith("`") && p.endsWith("`") ? (
-                <code key={j} className="bg-(--color-code-bg) px-1.5 py-0.5 rounded-md font-mono text-[13px] border border-(--color-code-border)">
-                  {p.slice(1, -1)}
-                </code>
-              ) : (
-                <span key={j} className="whitespace-pre-wrap">{p}</span>
-              )
-            )}
-          </span>
-        );
-      })}
-    </div>
-  );
 }

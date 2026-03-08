@@ -141,6 +141,16 @@ export class ClaudeSessionManager {
     return undefined;
   }
 
+  getAnySessionWithHandle(): SessionInfo | undefined {
+    for (const session of this.sessions.values()) {
+      if (session.isActive && session.queryHandle) return session;
+    }
+    for (const session of this.sessions.values()) {
+      if (session.queryHandle) return session;
+    }
+    return undefined;
+  }
+
   isSessionActive(sessionId: string): boolean {
     return this.sessions.get(sessionId)?.isActive ?? false;
   }

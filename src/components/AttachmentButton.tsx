@@ -1,5 +1,6 @@
 import { useRef } from "react";
 import { Paperclip } from "lucide-react";
+import { Tooltip, TooltipTrigger, TooltipContent } from "./ui/tooltip";
 
 interface Props {
   onAddAttachments: (files: FileList) => void;
@@ -11,14 +12,19 @@ export function AttachmentButton({ onAddAttachments, disabled }: Props) {
 
   return (
     <>
-      <button
-        type="button"
-        disabled={disabled}
-        onClick={() => inputRef.current?.click()}
-        className="inline-flex items-center justify-center size-7 rounded-lg border border-(--color-overlay-border) bg-(--color-overlay) text-muted-foreground hover:bg-(--color-overlay-hover) hover:text-foreground transition-colors cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
-      >
-        <Paperclip className="size-3.5" />
-      </button>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <button
+            type="button"
+            disabled={disabled}
+            onClick={() => inputRef.current?.click()}
+            className="inline-flex items-center justify-center size-7 rounded-lg border border-(--color-overlay-border) bg-(--color-overlay) text-muted-foreground hover:bg-(--color-overlay-hover) hover:text-foreground transition-colors cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
+          >
+            <Paperclip className="size-3.5" />
+          </button>
+        </TooltipTrigger>
+        <TooltipContent>Attach files</TooltipContent>
+      </Tooltip>
       <input
         ref={inputRef}
         type="file"

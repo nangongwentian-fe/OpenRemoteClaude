@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { Gauge, Check } from "lucide-react";
 import {
   DropdownMenu,
@@ -5,6 +6,7 @@ import {
   DropdownMenuContent,
   DropdownMenuItem,
 } from "./ui/dropdown-menu";
+import { Tooltip, TooltipTrigger, TooltipContent } from "./ui/tooltip";
 import type { EffortLevel } from "@/types/messages";
 
 const EFFORT_CONFIG: Record<EffortLevel, { label: string; bars: number }> = {
@@ -43,17 +45,23 @@ interface Props {
 }
 
 export function EffortChip({ effort = "high", supportedLevels, onSelect }: Props) {
+  const [dropdownOpen, setDropdownOpen] = useState(false);
   const levels = supportedLevels && supportedLevels.length > 0 ? supportedLevels : ALL_LEVELS;
   const config = EFFORT_CONFIG[effort];
 
   return (
-    <DropdownMenu>
-      <DropdownMenuTrigger asChild>
-        <button className="inline-flex items-center gap-1.5 rounded-lg border border-(--color-overlay-border) bg-(--color-overlay) px-2 py-1 text-[11px] text-muted-foreground hover:bg-(--color-overlay-hover) hover:text-foreground transition-colors cursor-pointer">
-          <EffortBars level={config.bars} active />
-        </button>
-      </DropdownMenuTrigger>
-      <DropdownMenuContent align="start" className="min-w-[130px]">
+    <DropdownMenu open={dropdownOpen} onOpenChange={setDropdownOpen}>
+      <Tooltip open={dropdownOpen ? false : undefined}>
+        <TooltipTrigger asChild>
+          <DropdownMenuTrigger asChild>
+            <button className="inline-flex items-center gap-1.5 rounded-lg border border-(--color-overlay-border) bg-(--color-overlay) px-2 py-1 text-[11px] text-muted-foreground hover:bg-(--color-overlay-hover) hover:text-foreground transition-colors cursor-pointer">
+              <EffortBars level={config.bars} active />
+            </button>
+          </DropdownMenuTrigger>
+        </TooltipTrigger>
+        <TooltipContent>Effort Level</TooltipContent>
+      </Tooltip>
+      <DropdownMenuContent align="start" className="min-w-[130px]" onCloseAutoFocus={(e) => e.preventDefault()}>
         {levels.map((level) => (
           <DropdownMenuItem key={level} onClick={() => onSelect(level)}>
             <EffortBars level={EFFORT_CONFIG[level].bars} />

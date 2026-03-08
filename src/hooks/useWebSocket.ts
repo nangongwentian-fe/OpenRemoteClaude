@@ -61,6 +61,8 @@ export function useWebSocket(
         const msg = JSON.parse(event.data) as ServerMessage;
         if (msg.type === "auth_result" && msg.payload.success) {
           setStatus("authenticated");
+          // 认证成功后请求 capabilities（重连时也能获取 models）
+          ws.send(JSON.stringify({ type: "request_capabilities" }));
         }
         onMessageRef.current(msg);
       } catch {}

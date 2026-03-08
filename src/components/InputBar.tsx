@@ -8,6 +8,7 @@ import { McpStatusChip } from "./McpStatusChip";
 import { SlashCommandButton } from "./SlashCommandButton";
 import { AttachmentButton } from "./AttachmentButton";
 import { AttachmentPreview } from "./AttachmentPreview";
+import { TooltipProvider } from "./ui/tooltip";
 import { cn } from "@/lib/utils";
 import type {
   ModelInfo,
@@ -82,6 +83,26 @@ export function InputBar({
     }
   }, [handleSubmit]);
 
+  const handlePaste = useCallback((e: React.ClipboardEvent) => {
+    const items = e.clipboardData?.items;
+    if (!items) return;
+
+    const files: File[] = [];
+    for (let i = 0; i < items.length; i++) {
+      if (items[i].kind === "file") {
+        const file = items[i].getAsFile();
+        if (file) files.push(file);
+      }
+    }
+
+    if (files.length > 0) {
+      e.preventDefault();
+      const dt = new DataTransfer();
+      files.forEach((f) => dt.items.add(f));
+      onAddAttachments(dt.files);
+    }
+  }, [onAddAttachments]);
+
   const handleSlashCommand = useCallback((command: string) => {
     setText((prev) => {
       const prefix = `/${command} `;
@@ -119,6 +140,7 @@ export function InputBar({
             value={text}
             onChange={(e) => setText(e.target.value)}
             onKeyDown={handleKeyDown}
+            onPaste={handlePaste}
             placeholder={disabled ? "Connecting..." : "Message Claude Code..."}
             disabled={disabled}
             rows={1}
@@ -134,64 +156,66 @@ export function InputBar({
         </div>
 
         {/* Footer: toolbar */}
-        <div className="flex items-center justify-between px-2 py-1.5 gap-1">
-          {/* 左侧：设置 chips */}
-          <div className="flex items-center gap-1 overflow-x-auto scrollbar-none min-w-0">
-            <ModelChip
-              currentModel={currentModel}
-              models={models}
-              onSelect={onSetModel}
-              disabled={isProcessing}
-            />
-            <EffortChip
-              effort={preferences.effort}
-              supportedLevels={currentModelInfo?.supportedEffortLevels}
-              onSelect={(e) => onUpdatePreference("effort", e)}
-            />
-            <ThinkingChip
-              thinking={preferences.thinking}
-              onSelect={(m) => onUpdatePreference("thinking", m)}
-            />
-            <McpStatusChip servers={mcpServers} />
-          </div>
+        <TooltipProvider>
+          <div className="flex items-center justify-between px-2 py-1.5 gap-1">
+            {/* 左侧：设置 chips */}
+            <div className="flex items-center gap-1 overflow-x-auto scrollbar-none min-w-0">
+              <ModelChip
+                currentModel={currentModel}
+                models={models}
+                onSelect={onSetModel}
+                disabled={isProcessing}
+              />
+              <EffortChip
+                effort={preferences.effort}
+                supportedLevels={currentModelInfo?.supportedEffortLevels}
+                onSelect={(e) => onUpdatePreference("effort", e)}
+              />
+              <ThinkingChip
+                thinking={preferences.thinking}
+                onSelect={(m) => onUpdatePreference("thinking", m)}
+              />
+              <McpStatusChip servers={mcpServers} />
+            </div>
 
-          {/* 右侧：操作按钮 */}
-          <div className="flex items-center gap-1 shrink-0">
-            <AttachmentButton
-              onAddAttachments={onAddAttachments}
-              disabled={disabled}
-            />
-            <SlashCommandButton
-              commands={commands}
-              onSelect={handleSlashCommand}
-            />
-            {isProcessing ? (
-              <Button
-                type="button"
-                variant="destructive"
-                size="icon-sm"
-                className="rounded-full animate-scale-in"
-                onClick={onInterrupt}
-                aria-label="Stop generating"
-              >
-                <Square className="size-3.5" />
-              </Button>
-            ) : (
-              <Button
-                type="submit"
-                size="icon-sm"
-                className={cn(
-                  "rounded-full transition-all duration-200 animate-scale-in",
-                  canSubmit ? "shadow-md shadow-primary/20" : "opacity-50"
-                )}
-                disabled={!canSubmit}
-                aria-label="Send message"
-              >
-                <ArrowUp className="size-4" />
-              </Button>
-            )}
+            {/* 右侧：操作按钮 */}
+            <div className="flex items-center gap-1 shrink-0">
+              <AttachmentButton
+                onAddAttachments={onAddAttachments}
+                disabled={disabled}
+              />
+              <SlashCommandButton
+                commands={commands}
+                onSelect={handleSlashCommand}
+              />
+              {isProcessing ? (
+                <Button
+                  type="button"
+                  variant="destructive"
+                  size="icon-sm"
+                  className="rounded-full animate-scale-in"
+                  onClick={onInterrupt}
+                  aria-label="Stop generating"
+                >
+                  <Square className="size-3.5" />
+                </Button>
+              ) : (
+                <Button
+                  type="submit"
+                  size="icon-sm"
+                  className={cn(
+                    "rounded-full transition-all duration-200 animate-scale-in",
+                    canSubmit ? "shadow-md shadow-primary/20" : "opacity-50"
+                  )}
+                  disabled={!canSubmit}
+                  aria-label="Send message"
+                >
+                  <ArrowUp className="size-4" />
+                </Button>
+              )}
+            </div>
           </div>
-        </div>
+        </TooltipProvider>
       </form>
     </div>
   );

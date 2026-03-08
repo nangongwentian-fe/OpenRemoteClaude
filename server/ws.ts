@@ -282,6 +282,7 @@ export function createWSHandlers(jwtSecret: string, db: DataStore) {
                   type: "chat_complete",
                   payload: { sessionId },
                 });
+                sendCapabilities(ws, sessionId);
               },
               (err) => {
                 ws.data.activeSessionId = null;
@@ -347,7 +348,7 @@ export function createWSHandlers(jwtSecret: string, db: DataStore) {
 
         case "request_capabilities": {
           if (!ws.data.authenticated) return;
-          const session = sessionManager.getActiveSession();
+          const session = sessionManager.getAnySessionWithHandle();
           if (session) {
             await sendCapabilities(ws, session.id);
           }
