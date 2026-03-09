@@ -26,8 +26,23 @@ export function useWebSocket(
   onAuthFailedRef.current = onAuthFailed;
 
   const cleanup = useCallback(() => {
+    if (heartbeatTimer.current) {
+      clearInterval(heartbeatTimer.current);
+      heartbeatTimer.current = undefined;
+    }
+    if (reconnectTimer.current) {
+      clearTimeout(reconnectTimer.current);
+      reconnectTimer.current = undefined;
+    }
+  }, []);
+
+  const startHeartbeat = useCallback((ws: WebSocket) => {
     if (heartbeatTimer.current) clearInterval(heartbeatTimer.current);
-    if (reconnectTimer.current) clearTimeout(reconnectTimer.current);
+    heartbeatTimer.current = setInterval(() => {
+      if (ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({ type: "ping" }));
+      }
+    }, HEARTBEAT_INTERVAL);
   }, []);
 
   const sendRaw = useCallback((msg: ClientMessage) => {
@@ -51,13 +66,8 @@ export function useWebSocket(
       reconnectAttempts.current = 0;
       // 发送认证
       ws.send(JSON.stringify({ type: "auth", token }));
-      // 清除可能残留的旧心跳后再启动新心跳
-      if (heartbeatTimer.current) clearInterval(heartbeatTimer.current);
-      heartbeatTimer.current = setInterval(() => {
-        if (ws.readyState === WebSocket.OPEN) {
-          ws.send(JSON.stringify({ type: "ping" }));
-        }
-      }, HEARTBEAT_INTERVAL);
+      // 启动心跳
+      startHeartbeat(ws);
     };
 
     ws.onmessage = (event) => {
@@ -95,7 +105,7 @@ export function useWebSocket(
     ws.onerror = () => {
       // onclose 会被调用，这里不需要额外处理
     };
-  }, [token, cleanup]);
+  }, [token, cleanup, startHeartbeat]);
 
   const disconnect = useCallback(() => {
     cleanup();
@@ -160,6 +170,29 @@ export function useWebSocket(
     },
     [sendRaw]
   );
+
+  // 页面可见性变化时暂停/恢复心跳，避免后台耗电
+  useEffect(() => {
+    const handleVisibility = () => {
+      const ws = wsRef.current;
+      if (document.hidden) {
+        // 页面进入后台：暂停心跳
+        if (heartbeatTimer.current) {
+          clearInterval(heartbeatTimer.current);
+          heartbeatTimer.current = undefined;
+        }
+      } else if (ws?.readyState === WebSocket.OPEN) {
+        // 页面回到前台且连接正常：恢复心跳
+        startHeartbeat(ws);
+      } else if (token && (!ws || ws.readyState === WebSocket.CLOSED)) {
+        // 页面回到前台但连接已断开：重连
+        reconnectAttempts.current = 0;
+        connect();
+      }
+    };
+    document.addEventListener("visibilitychange", handleVisibility);
+    return () => document.removeEventListener("visibilitychange", handleVisibility);
+  }, [token, startHeartbeat, connect]);
 
   // token 变化时重新连接
   useEffect(() => {

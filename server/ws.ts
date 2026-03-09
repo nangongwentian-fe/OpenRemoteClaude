@@ -27,6 +27,40 @@ function send(ws: ServerWebSocket<WSState>, data: unknown) {
   }
 }
 
+// Delta 微批处理：合并 16ms 内的同类型 delta，减少 WebSocket 帧数
+type DeltaBuffer = {
+  text: Map<number, string>;      // blockIndex -> accumulated text
+  thinking: Map<number, string>;   // blockIndex -> accumulated thinking
+  toolInput: Map<number, string>;  // blockIndex -> accumulated input delta
+  timer: ReturnType<typeof setTimeout> | null;
+};
+
+function createDeltaBuffer(): DeltaBuffer {
+  return { text: new Map(), thinking: new Map(), toolInput: new Map(), timer: null };
+}
+
+function flushDeltaBuffer(ws: ServerWebSocket<WSState>, buf: DeltaBuffer) {
+  for (const [blockIndex, text] of buf.text) {
+    send(ws, { type: "stream_delta", payload: { text, blockIndex } });
+  }
+  for (const [blockIndex, thinking] of buf.thinking) {
+    send(ws, { type: "thinking_delta", payload: { thinking, blockIndex } });
+  }
+  for (const [blockIndex, delta] of buf.toolInput) {
+    send(ws, { type: "tool_input_delta", payload: { delta, blockIndex } });
+  }
+  buf.text.clear();
+  buf.thinking.clear();
+  buf.toolInput.clear();
+  buf.timer = null;
+}
+
+function scheduleDeltaFlush(ws: ServerWebSocket<WSState>, buf: DeltaBuffer) {
+  if (!buf.timer) {
+    buf.timer = setTimeout(() => flushDeltaBuffer(ws, buf), 16);
+  }
+}
+
 function mapCommands(commands: Array<Record<string, unknown>>) {
   return commands
     .map((command) => ({
@@ -37,7 +71,7 @@ function mapCommands(commands: Array<Record<string, unknown>>) {
     .filter((command) => command.name);
 }
 
-function forwardSDKMessage(ws: ServerWebSocket<WSState>, msg: SDKMessage) {
+function forwardSDKMessage(ws: ServerWebSocket<WSState>, msg: SDKMessage, deltaBuf: DeltaBuffer) {
   switch (msg.type) {
     case "stream_event": {
       const event = msg.event as Record<string, unknown>;
@@ -48,22 +82,30 @@ function forwardSDKMessage(ws: ServerWebSocket<WSState>, msg: SDKMessage) {
       if (eventType === "content_block_delta") {
         const delta = event.delta as Record<string, unknown>;
         if (delta?.type === "text_delta") {
-          send(ws, {
-            type: "stream_delta",
-            payload: { text: delta.text, blockIndex: event.index },
-          });
+          // 使用 buffer 合并文本 delta
+          const blockIndex = event.index as number;
+          const existing = deltaBuf.text.get(blockIndex) || "";
+          deltaBuf.text.set(blockIndex, existing + (delta.text as string));
+          scheduleDeltaFlush(ws, deltaBuf);
         } else if (delta?.type === "thinking_delta") {
-          send(ws, {
-            type: "thinking_delta",
-            payload: { thinking: delta.thinking, blockIndex: event.index },
-          });
+          // 使用 buffer 合并 thinking delta
+          const blockIndex = event.index as number;
+          const existing = deltaBuf.thinking.get(blockIndex) || "";
+          deltaBuf.thinking.set(blockIndex, existing + (delta.thinking as string));
+          scheduleDeltaFlush(ws, deltaBuf);
         } else if (delta?.type === "input_json_delta") {
-          send(ws, {
-            type: "tool_input_delta",
-            payload: { delta: delta.partial_json, blockIndex: event.index },
-          });
+          // 使用 buffer 合并 tool input delta
+          const blockIndex = event.index as number;
+          const existing = deltaBuf.toolInput.get(blockIndex) || "";
+          deltaBuf.toolInput.set(blockIndex, existing + (delta.partial_json as string));
+          scheduleDeltaFlush(ws, deltaBuf);
         }
       } else if (eventType === "content_block_start") {
+        // block start 前先 flush 积压的 delta
+        if (deltaBuf.timer) {
+          clearTimeout(deltaBuf.timer);
+          flushDeltaBuffer(ws, deltaBuf);
+        }
         const block = event.content_block as Record<string, unknown>;
         if (block?.type === "tool_use") {
           send(ws, {
@@ -81,6 +123,11 @@ function forwardSDKMessage(ws: ServerWebSocket<WSState>, msg: SDKMessage) {
           });
         }
       } else if (eventType === "content_block_stop") {
+        // block stop 前先 flush 积压的 delta
+        if (deltaBuf.timer) {
+          clearTimeout(deltaBuf.timer);
+          flushDeltaBuffer(ws, deltaBuf);
+        }
         send(ws, {
           type: "block_stop",
           payload: { blockIndex: event.index },
@@ -90,6 +137,11 @@ function forwardSDKMessage(ws: ServerWebSocket<WSState>, msg: SDKMessage) {
     }
 
     case "assistant": {
+      // 完整消息到达前 flush 所有积压的 delta
+      if (deltaBuf.timer) {
+        clearTimeout(deltaBuf.timer);
+        flushDeltaBuffer(ws, deltaBuf);
+      }
       const message = msg.message as Record<string, unknown>;
       const content = message?.content;
       if (Array.isArray(content)) {
@@ -123,6 +175,11 @@ function forwardSDKMessage(ws: ServerWebSocket<WSState>, msg: SDKMessage) {
     }
 
     case "result": {
+      // result 前 flush 所有积压的 delta
+      if (deltaBuf.timer) {
+        clearTimeout(deltaBuf.timer);
+        flushDeltaBuffer(ws, deltaBuf);
+      }
       send(ws, {
         type: "result",
         payload: {
@@ -206,6 +263,17 @@ async function sendCapabilities(ws: ServerWebSocket<WSState>, sessionId: string)
 
 export function createWSHandlers(jwtSecret: string, db: DataStore) {
   const disconnectTimers = new Map<string, ReturnType<typeof setTimeout>>();
+  // 每个连接一个 delta buffer
+  const deltaBuffers = new WeakMap<ServerWebSocket<WSState>, DeltaBuffer>();
+
+  function getDeltaBuffer(ws: ServerWebSocket<WSState>): DeltaBuffer {
+    let buf = deltaBuffers.get(ws);
+    if (!buf) {
+      buf = createDeltaBuffer();
+      deltaBuffers.set(ws, buf);
+    }
+    return buf;
+  }
 
   return {
     open(ws: ServerWebSocket<WSState>) {
@@ -303,10 +371,11 @@ export function createWSHandlers(jwtSecret: string, db: DataStore) {
           }
 
           try {
+            const deltaBuf = getDeltaBuffer(ws);
             const sessionId = await sessionManager.startSession(
               resolvedPrompt,
               cwd,
-              (msg) => forwardSDKMessage(ws, msg as SDKMessage),
+              (msg) => forwardSDKMessage(ws, msg as SDKMessage, deltaBuf),
               () => {
                 ws.data.activeSessionId = null;
                 const timer = disconnectTimers.get(sessionId);
@@ -464,6 +533,13 @@ export function createWSHandlers(jwtSecret: string, db: DataStore) {
 
     close(ws: ServerWebSocket<WSState>) {
       console.log(`[WS] Client disconnected: ${ws.data.clientId}`);
+
+      // 清理 delta buffer
+      const buf = deltaBuffers.get(ws);
+      if (buf?.timer) {
+        clearTimeout(buf.timer);
+        buf.timer = null;
+      }
 
       const activeSessionId = ws.data.activeSessionId;
       if (activeSessionId) {

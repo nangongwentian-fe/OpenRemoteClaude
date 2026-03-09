@@ -63,7 +63,7 @@ export function InputBar({
 }: Props) {
   const [text, setText] = useState("");
   const textareaRef = useRef<HTMLTextAreaElement>(null);
-  const blurTimeoutRef = useRef<ReturnType<typeof setTimeout>>();
+  const blurTimeoutRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
 
   // Slash command panel state
   const [showPanel, setShowPanel] = useState(false);
@@ -71,18 +71,25 @@ export function InputBar({
   const [slashFilter, setSlashFilter] = useState("");
 
   // JS fallback for browsers that don't support field-sizing: content
+  // 使用 RAF 节流避免每次击键都触发 reflow
+  const heightRafRef = useRef<number>(0);
   useEffect(() => {
     const ta = textareaRef.current;
     if (ta && !CSS.supports("field-sizing", "content")) {
-      ta.style.height = "auto";
-      ta.style.height = Math.min(ta.scrollHeight, 192) + "px";
+      if (heightRafRef.current) cancelAnimationFrame(heightRafRef.current);
+      heightRafRef.current = requestAnimationFrame(() => {
+        heightRafRef.current = 0;
+        ta.style.height = "auto";
+        ta.style.height = Math.min(ta.scrollHeight, 192) + "px";
+      });
     }
   }, [text]);
 
-  // Cleanup blur timeout
+  // Cleanup blur timeout and height RAF
   useEffect(() => {
     return () => {
       if (blurTimeoutRef.current) clearTimeout(blurTimeoutRef.current);
+      if (heightRafRef.current) cancelAnimationFrame(heightRafRef.current);
     };
   }, []);
 

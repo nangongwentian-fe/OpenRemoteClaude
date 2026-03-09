@@ -69,7 +69,7 @@ export class DataStore {
     return {
       getConfig: this.db.query("SELECT value FROM config WHERE key = ?"),
       setConfig: this.db.query("INSERT OR REPLACE INTO config (key, value) VALUES (?, ?)"),
-      createSession: this.db.query("INSERT INTO sessions (id, cwd) VALUES (?, ?)"),
+      createSession: this.db.query("INSERT OR IGNORE INTO sessions (id, cwd) VALUES (?, ?)"),
       completeSession: this.db.query("UPDATE sessions SET ended_at = unixepoch(), is_error = ?, num_turns = ?, duration_ms = ? WHERE id = ?"),
       saveMessage: this.db.query("INSERT INTO messages (session_id, role, content) VALUES (?, ?, ?)"),
       getRecentSessions: this.db.query("SELECT * FROM sessions ORDER BY started_at DESC LIMIT ?"),

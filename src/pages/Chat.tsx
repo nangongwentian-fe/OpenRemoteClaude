@@ -108,10 +108,11 @@ export function Chat({
     return () => container.removeEventListener("scroll", handleScroll);
   }, []);
 
-  // 仅在接近底部时自动滚动，流式传输中使用 instant 避免动画叠加
+  // 仅在接近底部时自动滚动，流式传输中直接设置 scrollTop 避免 scrollIntoView 开销
   useEffect(() => {
-    if (isNearBottomRef.current) {
-      bottomRef.current?.scrollIntoView({ behavior: "instant" });
+    const container = scrollContainerRef.current;
+    if (isNearBottomRef.current && container) {
+      container.scrollTop = container.scrollHeight;
     }
   }, [messages]);
 

@@ -6,7 +6,9 @@ import { extname, join, relative, resolve } from "node:path";
 import { spawn } from "node:child_process";
 
 const SESSION_CLEANUP_DELAY_MS = 60_000; // 完成后 60 秒清除
-const SESSION_CLEANUP_INTERVAL_MS = 300_000; // 每 5 分钟扫描一次（兜底）
+const SESSION_CLEANUP_INTERVAL_MS = 60_000; // 每 60 秒扫描一次
+const PROBE_CACHE_TTL_MS = 300_000; // probe 缓存 5 分钟
+const SLASH_COMMAND_CACHE_TTL_MS = 30_000; // slash command 缓存 30 秒
 const SDK_SETTING_SOURCES = ["user", "project", "local"] as const;
 
 interface SlashCommandDefinition {
@@ -213,6 +215,10 @@ function runShellCommand(command: string, cwd: string) {
     setTimeout(() => {
       if (!settled) {
         child.kill("SIGTERM");
+        // SIGKILL 兜底：如果进程忽略 SIGTERM，2 秒后强杀
+        setTimeout(() => {
+          if (!settled) child.kill("SIGKILL");
+        }, 2_000);
         finish("Command timed out after 10s");
       }
     }, 10_000);
@@ -283,6 +289,8 @@ export interface SessionOptions {
 export class ClaudeSessionManager {
   private sessions = new Map<string, SessionInfo>();
   private cleanupTimer: ReturnType<typeof setInterval>;
+  private probeCache: { data: { models: unknown[]; commands: unknown[]; mcpServers: unknown[] }; timestamp: number } | null = null;
+  private slashCommandCache = new Map<string, { commands: LocalSlashCommand[]; timestamp: number }>();
 
   constructor() {
     this.cleanupTimer = setInterval(() => {
@@ -311,15 +319,7 @@ export class ClaudeSessionManager {
     session.isActive = false;
     session.queryHandle = null;
     session.completedAt = Date.now();
-
-    // 精确定时清理，不依赖扫描间隔
-    setTimeout(() => {
-      const s = this.sessions.get(sessionId);
-      if (s && s.completedAt !== null) {
-        this.sessions.delete(sessionId);
-        console.log(`[Session] Cleaned up session ${sessionId}`);
-      }
-    }, SESSION_CLEANUP_DELAY_MS);
+    // 清理由全局 sweepExpiredSessions 统一处理
   }
 
   dispose() {
@@ -527,6 +527,11 @@ export class ClaudeSessionManager {
    * 用于在没有活跃 session 时获取可用模型信息。
    */
   async probeCapabilities(cwd: string): Promise<{ models: unknown[]; commands: unknown[]; mcpServers: unknown[] } | null> {
+    // 使用缓存避免重复创建探测 session
+    if (this.probeCache && Date.now() - this.probeCache.timestamp < PROBE_CACHE_TTL_MS) {
+      return this.probeCache.data;
+    }
+
     const abortController = new AbortController();
     let q: Query | null = null;
     try {
@@ -543,11 +548,13 @@ export class ClaudeSessionManager {
       });
 
       const initResult = await q.initializationResult();
-      return {
+      const data = {
         models: initResult.models,
         commands: initResult.commands,
         mcpServers: [],
       };
+      this.probeCache = { data, timestamp: Date.now() };
+      return data;
     } catch {
       return null;
     } finally {
@@ -568,7 +575,17 @@ export class ClaudeSessionManager {
       return prompt;
     }
 
-    const localCommands = await discoverFallbackSlashCommands(cwd);
+    // 使用缓存的 slash command 发现结果
+    const normalizedCwd = resolve(cwd);
+    const cached = this.slashCommandCache.get(normalizedCwd);
+    let localCommands: LocalSlashCommand[];
+    if (cached && Date.now() - cached.timestamp < SLASH_COMMAND_CACHE_TTL_MS) {
+      localCommands = cached.commands;
+    } else {
+      localCommands = await discoverFallbackSlashCommands(cwd);
+      this.slashCommandCache.set(normalizedCwd, { commands: localCommands, timestamp: Date.now() });
+    }
+
     const command = localCommands.find((item) => item.name === invocation.name);
     if (!command) return prompt;
 

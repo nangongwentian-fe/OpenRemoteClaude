@@ -297,28 +297,30 @@ export function useMessages() {
         if (!pending) return;
         pendingBlocksRef.current = null;
 
+        const filteredBlocks = pending.filter(Boolean);
+
         setMessages((prev) => {
           const lastIdx = prev.length - 1;
           const lastMsg = lastIdx >= 0 ? prev[lastIdx] : null;
-          const updated = [...prev];
 
           if (lastMsg?.role === "assistant" && lastMsg.isStreaming) {
-            // 更新已有的 streaming 消息
-            updated[lastIdx] = {
-              ...prev[lastIdx],
-              blocks: [...pending.filter(Boolean)],
-            };
-          } else {
-            // 上一轮已 finalized，自动创建新的 streaming 占位
-            updated.push({
+            // 只替换最后一个元素，避免展开整个数组
+            const updated = prev.slice();
+            updated[lastIdx] = { ...prev[lastIdx], blocks: filteredBlocks };
+            return updated;
+          }
+
+          // 上一轮已 finalized，自动创建新的 streaming 占位
+          return [
+            ...prev,
+            {
               id: crypto.randomUUID(),
-              role: "assistant",
-              blocks: [...pending.filter(Boolean)],
+              role: "assistant" as const,
+              blocks: filteredBlocks,
               timestamp: Date.now(),
               isStreaming: true,
-            });
-          }
-          return updated;
+            },
+          ];
         });
       });
     }
@@ -330,7 +332,7 @@ export function useMessages() {
       rafIdRef.current = 0;
       pendingBlocksRef.current = null;
     }
-    streamingRef.current = { blocks: [], toolInputs: new Map(), finalizedBlocks: [] };
+    streamingRef.current = { blocks: [], toolInputs: new Map() };
     setMessages([]);
     setIsProcessing(false);
     setCurrentSessionId(null);

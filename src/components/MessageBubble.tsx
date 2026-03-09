@@ -54,7 +54,7 @@ export const MessageBubble = memo(function MessageBubble({ message, onPermission
   );
 });
 
-function BlockRenderer({
+const BlockRenderer = memo(function BlockRenderer({
   block,
   isUser,
   onPermissionRespond,
@@ -100,7 +100,7 @@ function BlockRenderer({
     default:
       return null;
   }
-}
+});
 
 function MessageAttachments({
   attachments,
