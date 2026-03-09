@@ -14,6 +14,7 @@ export interface SlashCommandDefinition {
   argumentHint?: string;
   filePath?: string;
   body?: string;
+  userInvocable?: boolean;
 }
 
 type LocalSlashCommand = SlashCommandDefinition & {
@@ -51,6 +52,26 @@ function parseFrontmatter(content: string) {
   };
 }
 
+async function readOpenAiInterfaceMetadata(skillDir: string) {
+  const openAiYamlPath = join(skillDir, "agents", "openai.yaml");
+  if (!existsSync(openAiYamlPath)) {
+    return {};
+  }
+
+  try {
+    const content = await readFile(openAiYamlPath, "utf8");
+    const displayNameMatch = content.match(/^\s*display_name:\s*["']?(.+?)["']?\s*$/m);
+    const shortDescriptionMatch = content.match(/^\s*short_description:\s*["']?(.+?)["']?\s*$/m);
+
+    return {
+      displayName: displayNameMatch?.[1]?.trim(),
+      shortDescription: shortDescriptionMatch?.[1]?.trim(),
+    };
+  } catch {
+    return {};
+  }
+}
+
 function buildCommandName(relativePath: string) {
   return relativePath
     .replace(/\\/g, "/")
@@ -84,23 +105,26 @@ async function collectFiles(dir: string, matcher: (filePath: string) => boolean)
 async function loadMarkdownCommand(filePath: string, relativePath: string) {
   const content = await readFile(filePath, "utf8");
   const { body, metadata } = parseFrontmatter(content);
+  const interfaceMetadata = await readOpenAiInterfaceMetadata(dirname(filePath));
   const name = metadata.name?.trim() || buildCommandName(relativePath);
   if (!name) return null;
+  const userInvocable = metadata["user-invocable"]?.trim().toLowerCase() !== "false";
 
   return {
     name,
-    description: metadata.description?.trim(),
+    description: metadata.description?.trim() || interfaceMetadata.shortDescription,
     argumentHint: metadata["argument-hint"]?.trim(),
     filePath,
     body,
+    userInvocable,
   } satisfies LocalSlashCommand;
 }
 
-function findNearestClaudeDir(startCwd: string) {
+function findNearestNamedDir(startCwd: string, dirName: string) {
   let current = resolve(startCwd);
 
   while (true) {
-    const candidate = join(current, ".claude");
+    const candidate = join(current, dirName);
     if (existsSync(candidate)) {
       return candidate;
     }
@@ -113,39 +137,62 @@ function findNearestClaudeDir(startCwd: string) {
   }
 }
 
-async function scanClaudeDirectory(claudeDir: string) {
-  const commandsRoot = join(claudeDir, "commands");
-  const skillsRoot = join(claudeDir, "skills");
+interface SlashCommandSource {
+  kind: "commands" | "skills";
+  root: string;
+}
 
-  const [commandFiles, skillFiles] = await Promise.all([
-    collectFiles(commandsRoot, (filePath) => extname(filePath).toLowerCase() === ".md"),
-    collectFiles(skillsRoot, (filePath) => filePath.endsWith("/SKILL.md") || filePath.endsWith("\\SKILL.md")),
-  ]);
+async function scanSlashCommandSource(source: SlashCommandSource) {
+  const files = await collectFiles(
+    source.root,
+    (filePath) =>
+      source.kind === "commands"
+        ? extname(filePath).toLowerCase() === ".md"
+        : filePath.endsWith("/SKILL.md") || filePath.endsWith("\\SKILL.md")
+  );
 
-  const [commands, skills] = await Promise.all([
-    Promise.all(
-      commandFiles.map((filePath) =>
-        loadMarkdownCommand(filePath, relative(commandsRoot, filePath))
-      )
-    ),
-    Promise.all(
-      skillFiles.map((filePath) =>
-        loadMarkdownCommand(filePath, relative(skillsRoot, filePath))
-      )
-    ),
-  ]);
+  const commands = await Promise.all(
+    files.map((filePath) => loadMarkdownCommand(filePath, relative(source.root, filePath)))
+  );
 
-  return [...commands, ...skills].filter((command): command is LocalSlashCommand => Boolean(command));
+  return commands.filter(
+    (command): command is LocalSlashCommand => Boolean(command) && command.userInvocable !== false
+  );
 }
 
 async function discoverLocalSlashCommands(cwd: string) {
-  const projectClaudeDir = findNearestClaudeDir(cwd);
-  const userClaudeDir = join(homedir(), ".claude");
-  const dirs = [projectClaudeDir, existsSync(userClaudeDir) ? userClaudeDir : null].filter(
-    (dir): dir is string => Boolean(dir)
+  const userHome = homedir();
+  const sources: SlashCommandSource[] = [
+    { kind: "commands", root: join(resolve(cwd), ".claude", "commands") },
+    { kind: "skills", root: join(resolve(cwd), ".claude", "skills") },
+    { kind: "skills", root: join(resolve(cwd), ".agents", "skills") },
+    { kind: "skills", root: join(resolve(cwd), ".codex", "skills") },
+  ];
+
+  const nearestClaudeDir = findNearestNamedDir(cwd, ".claude");
+  const nearestAgentsDir = findNearestNamedDir(cwd, ".agents");
+  const nearestCodexDir = findNearestNamedDir(cwd, ".codex");
+
+  if (nearestClaudeDir) {
+    sources.push({ kind: "commands", root: join(nearestClaudeDir, "commands") });
+    sources.push({ kind: "skills", root: join(nearestClaudeDir, "skills") });
+  }
+  if (nearestAgentsDir) {
+    sources.push({ kind: "skills", root: join(nearestAgentsDir, "skills") });
+  }
+  if (nearestCodexDir) {
+    sources.push({ kind: "skills", root: join(nearestCodexDir, "skills") });
+  }
+
+  sources.push(
+    { kind: "commands", root: join(userHome, ".claude", "commands") },
+    { kind: "skills", root: join(userHome, ".claude", "skills") },
+    { kind: "skills", root: join(userHome, ".agents", "skills") },
+    { kind: "skills", root: join(userHome, ".codex", "skills") }
   );
 
-  const discovered = await Promise.all(dirs.map((dir) => scanClaudeDirectory(dir)));
+  const dedupedSources = [...new Map(sources.map((source) => [`${source.kind}:${source.root}`, source])).values()];
+  const discovered = await Promise.all(dedupedSources.map((source) => scanSlashCommandSource(source)));
   const merged = new Map<string, LocalSlashCommand>();
 
   for (const group of discovered) {
@@ -156,7 +203,9 @@ async function discoverLocalSlashCommands(cwd: string) {
     }
   }
 
-  return [...merged.values()];
+  return [...merged.values()].sort((a, b) =>
+    a.name.localeCompare(b.name, "en", { sensitivity: "base" })
+  );
 }
 
 function mergeCommands(primary: SlashCommandDefinition[], secondary: SlashCommandDefinition[]) {
@@ -168,7 +217,9 @@ function mergeCommands(primary: SlashCommandDefinition[], secondary: SlashComman
     }
   }
 
-  return [...merged.values()];
+  return [...merged.values()].sort((a, b) =>
+    a.name.localeCompare(b.name, "en", { sensitivity: "base" })
+  );
 }
 
 function parseSlashInvocation(prompt: string) {
