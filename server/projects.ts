@@ -1,7 +1,7 @@
 import { Hono } from "hono";
 import { jwt } from "hono/jwt";
-import { readdirSync, statSync, existsSync, mkdirSync, rmSync } from "node:fs";
-import { join, dirname, basename, resolve } from "node:path";
+import { readdirSync, statSync, existsSync, mkdirSync, rmSync, readFileSync, writeFileSync, unlinkSync } from "node:fs";
+import { join, dirname, basename, resolve, extname } from "node:path";
 import type { DataStore } from "./db";
 
 const HIDDEN_DIRS = new Set([
@@ -14,6 +14,48 @@ const HIDDEN_DIRS = new Set([
   ".vscode",
   ".idea",
 ]);
+
+const HIDDEN_FILES = new Set([
+  ".DS_Store",
+  "Thumbs.db",
+  ".env",
+  ".env.local",
+]);
+
+const MAX_FILE_SIZE = 1024 * 1024; // 1MB
+
+const EXTENSION_LANG: Record<string, string> = {
+  ts: "typescript", tsx: "typescript", js: "javascript", jsx: "javascript",
+  py: "python", rs: "rust", go: "go", java: "java", rb: "ruby",
+  c: "c", cpp: "cpp", h: "c", hpp: "cpp", cs: "csharp",
+  css: "css", scss: "scss", less: "less", html: "html",
+  json: "json", md: "markdown", yaml: "yaml", yml: "yaml",
+  sh: "bash", bash: "bash", zsh: "bash", fish: "bash",
+  sql: "sql", xml: "xml", svg: "xml", toml: "toml",
+  vue: "vue", svelte: "svelte", astro: "astro",
+  dockerfile: "dockerfile", makefile: "makefile",
+};
+
+function getLanguage(filename: string): string {
+  const ext = extname(filename).slice(1).toLowerCase();
+  if (EXTENSION_LANG[ext]) return EXTENSION_LANG[ext];
+  const lower = filename.toLowerCase();
+  if (lower === "dockerfile") return "dockerfile";
+  if (lower === "makefile") return "makefile";
+  return "plaintext";
+}
+
+function isBinary(buffer: Buffer): boolean {
+  const checkLength = Math.min(buffer.length, 8192);
+  for (let i = 0; i < checkLength; i++) {
+    if (buffer[i] === 0) return true;
+  }
+  return false;
+}
+
+function isWithinProject(absPath: string, projects: Array<{ path: string }>): boolean {
+  return projects.some((p) => absPath === p.path || absPath.startsWith(p.path + "/"));
+}
 
 export function createProjectRoutes(db: DataStore, jwtSecret: string) {
   const app = new Hono();
@@ -126,6 +168,169 @@ export function createProjectRoutes(db: DataStore, jwtSecret: string) {
       rmSync(absPath, { recursive: true });
     } catch {
       return c.json({ error: "Failed to delete folder" }, 403);
+    }
+
+    return c.json({ ok: true });
+  });
+
+  // GET /api/projects/tree?path=... — 文件树列表（文件+文件夹）
+  app.get("/tree", (c) => {
+    const rawPath = c.req.query("path");
+    if (!rawPath) {
+      return c.json({ error: "path parameter is required" }, 400);
+    }
+    const absPath = resolve(rawPath);
+
+    if (!existsSync(absPath) || !statSync(absPath).isDirectory()) {
+      return c.json({ error: "Path does not exist or is not a directory" }, 400);
+    }
+
+    const projects = db.getProjects();
+    if (!isWithinProject(absPath, projects)) {
+      return c.json({ error: "Path is not within a registered project" }, 403);
+    }
+
+    const entries: Array<{
+      name: string;
+      isDirectory: boolean;
+      size: number;
+      extension: string;
+    }> = [];
+
+    try {
+      const items = readdirSync(absPath);
+      for (const name of items) {
+        if (HIDDEN_DIRS.has(name) || HIDDEN_FILES.has(name)) continue;
+        if (name.startsWith(".")) continue;
+        try {
+          const fullPath = join(absPath, name);
+          const s = statSync(fullPath);
+          if (s.isDirectory()) {
+            entries.push({ name, isDirectory: true, size: 0, extension: "" });
+          } else if (s.isFile()) {
+            const ext = extname(name).slice(1).toLowerCase();
+            entries.push({ name, isDirectory: false, size: s.size, extension: ext });
+          }
+        } catch {
+          // skip inaccessible
+        }
+      }
+    } catch {
+      return c.json({ error: "Cannot read directory" }, 403);
+    }
+
+    // 文件夹在前，再按字母排序
+    entries.sort((a, b) => {
+      if (a.isDirectory !== b.isDirectory) return a.isDirectory ? -1 : 1;
+      return a.name.localeCompare(b.name);
+    });
+
+    const parent = absPath === "/" ? null : dirname(absPath);
+    return c.json({ current: absPath, parent, entries });
+  });
+
+  // GET /api/projects/file?path=... — 读取文件内容
+  app.get("/file", (c) => {
+    const rawPath = c.req.query("path");
+    if (!rawPath) {
+      return c.json({ error: "path parameter is required" }, 400);
+    }
+    const absPath = resolve(rawPath);
+
+    const projects = db.getProjects();
+    if (!isWithinProject(absPath, projects)) {
+      return c.json({ error: "Path is not within a registered project" }, 403);
+    }
+
+    if (!existsSync(absPath)) {
+      return c.json({ error: "File does not exist" }, 404);
+    }
+
+    const stat = statSync(absPath);
+    if (!stat.isFile()) {
+      return c.json({ error: "Path is not a file" }, 400);
+    }
+
+    if (stat.size > MAX_FILE_SIZE) {
+      return c.json({ error: "File too large", size: stat.size, maxSize: MAX_FILE_SIZE }, 413);
+    }
+
+    try {
+      const buffer = readFileSync(absPath);
+      if (isBinary(buffer)) {
+        return c.json({ error: "Binary file cannot be displayed" }, 415);
+      }
+      const content = buffer.toString("utf-8");
+      const lineCount = content.split("\n").length;
+      const language = getLanguage(basename(absPath));
+
+      return c.json({
+        path: absPath,
+        name: basename(absPath),
+        content,
+        language,
+        lineCount,
+      });
+    } catch {
+      return c.json({ error: "Cannot read file" }, 403);
+    }
+  });
+
+  // POST /api/projects/file — 新建文件
+  app.post("/file", async (c) => {
+    const body = await c.req.json<{ parent: string; name: string; content?: string }>();
+    const name = body.name?.trim();
+
+    if (!name || name.length > 255 || /[\/\\\0]/.test(name) || name.includes("..")) {
+      return c.json({ error: "Invalid file name" }, 400);
+    }
+
+    const absParent = resolve(body.parent);
+    const projects = db.getProjects();
+    if (!isWithinProject(absParent, projects)) {
+      return c.json({ error: "Path is not within a registered project" }, 403);
+    }
+
+    if (!existsSync(absParent) || !statSync(absParent).isDirectory()) {
+      return c.json({ error: "Parent path does not exist or is not a directory" }, 400);
+    }
+
+    const targetPath = join(absParent, name);
+    if (existsSync(targetPath)) {
+      return c.json({ error: "A file or folder with this name already exists" }, 400);
+    }
+
+    try {
+      writeFileSync(targetPath, body.content || "");
+    } catch {
+      return c.json({ error: "Failed to create file" }, 403);
+    }
+
+    return c.json({ ok: true, path: targetPath });
+  });
+
+  // DELETE /api/projects/file — 删除文件
+  app.delete("/file", async (c) => {
+    const body = await c.req.json<{ path: string }>();
+    const absPath = resolve(body.path);
+
+    const projects = db.getProjects();
+    if (!isWithinProject(absPath, projects)) {
+      return c.json({ error: "Path is not within a registered project" }, 403);
+    }
+
+    if (!existsSync(absPath)) {
+      return c.json({ error: "File does not exist" }, 404);
+    }
+
+    if (!statSync(absPath).isFile()) {
+      return c.json({ error: "Path is not a file" }, 400);
+    }
+
+    try {
+      unlinkSync(absPath);
+    } catch {
+      return c.json({ error: "Failed to delete file" }, 403);
     }
 
     return c.json({ ok: true });

@@ -206,3 +206,38 @@ export interface Project {
   name: string;
   addedAt: number;
 }
+
+// 文件树条目（API 返回）
+export interface FileTreeEntry {
+  name: string;
+  isDirectory: boolean;
+  size: number;
+  extension: string;
+}
+
+// 文件引用类型
+export type FileReference =
+  | { type: "file"; id: string; path: string; name: string }
+  | { type: "folder"; id: string; path: string; name: string }
+  | {
+      type: "code_snippet";
+      id: string;
+      path: string;
+      name: string;
+      startLine: number;
+      endLine: number;
+      content: string;
+    };
+
+// 分布式 Omit 以保持 union 的 discriminated 性质
+type DistributiveOmit<T, K extends keyof T> = T extends unknown ? Omit<T, K> : never;
+export type NewFileReference = DistributiveOmit<FileReference, "id">;
+
+// 文件内容（API 返回）
+export interface FileContent {
+  path: string;
+  name: string;
+  content: string;
+  language: string;
+  lineCount: number;
+}

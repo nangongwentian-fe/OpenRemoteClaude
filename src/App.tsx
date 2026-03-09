@@ -8,6 +8,7 @@ import { usePreferences } from "./hooks/usePreferences";
 import { useCapabilities } from "./hooks/useCapabilities";
 import { useAttachments } from "./hooks/useAttachments";
 import { useProjects } from "./hooks/useProjects";
+import { useFileReferences } from "./hooks/useFileReferences";
 import { Login } from "./pages/Login";
 import { Chat } from "./pages/Chat";
 import { ProjectManager } from "./components/ProjectManager";
@@ -22,6 +23,7 @@ export default function App() {
   const capabilities = useCapabilities(preferences.model, preferences.permissionMode);
   const attachments = useAttachments();
   const projectsHook = useProjects(auth.token);
+  const fileReferences = useFileReferences();
   const [projectManagerOpen, setProjectManagerOpen] = useState(false);
   const {
     messages,
@@ -163,6 +165,15 @@ export default function App() {
       attachments.clear();
     }
 
+    // 序列化文件引用
+    if (fileReferences.references.length > 0) {
+      const refText = fileReferences.serialize();
+      if (refText) {
+        finalPrompt = `${finalPrompt}\n\n${refText}`;
+      }
+      fileReferences.clear();
+    }
+
     const cwd = capabilitiesCwd;
 
     addUserMessage(prompt, attachmentInfos);
@@ -223,6 +234,10 @@ export default function App() {
       onSwitchProject={handleSwitchProject}
       onManageProjects={() => setProjectManagerOpen(true)}
       showProjectLabel={!projectsHook.activeProject}
+      token={auth.token!}
+      references={fileReferences.references}
+      onAddReference={fileReferences.addReference}
+      onRemoveReference={fileReferences.removeReference}
     />
     <ProjectManager
       open={projectManagerOpen}

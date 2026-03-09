@@ -10,6 +10,7 @@ import { SlashCommandButton } from "./SlashCommandButton";
 import { SlashCommandPanel } from "./SlashCommandPanel";
 import { AttachmentButton } from "./AttachmentButton";
 import { AttachmentPreview } from "./AttachmentPreview";
+import { ReferencePreview } from "./ReferencePreview";
 import { TooltipProvider } from "./ui/tooltip";
 import { cn } from "@/lib/utils";
 import type {
@@ -19,6 +20,7 @@ import type {
   SessionPreferences,
   PermissionMode,
   Attachment,
+  FileReference,
 } from "@/types/messages";
 
 interface Props {
@@ -41,6 +43,9 @@ interface Props {
   attachments: Attachment[];
   onAddAttachments: (files: FileList) => void;
   onRemoveAttachment: (id: string) => void;
+  // 引用
+  references?: FileReference[];
+  onRemoveReference?: (id: string) => void;
 }
 
 export function InputBar({
@@ -60,6 +65,8 @@ export function InputBar({
   attachments,
   onAddAttachments,
   onRemoveAttachment,
+  references,
+  onRemoveReference,
 }: Props) {
   const [text, setText] = useState("");
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -258,6 +265,14 @@ export function InputBar({
             attachments={attachments}
             onRemove={onRemoveAttachment}
           />
+
+          {/* 引用预览区 */}
+          {references && onRemoveReference && (
+            <ReferencePreview
+              references={references}
+              onRemove={onRemoveReference}
+            />
+          )}
 
           {/* Body: textarea */}
           <div className="px-4 pt-3 pb-1">

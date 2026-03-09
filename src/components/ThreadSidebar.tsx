@@ -10,6 +10,7 @@ import {
   SheetTitle,
 } from "./ui/sheet";
 import { cn } from "@/lib/utils";
+import { useResizablePanel } from "@/hooks/useResizablePanel";
 import type { Thread } from "../types/messages";
 
 interface Props {
@@ -65,6 +66,14 @@ export function ThreadSidebar({
       onSheetOpenChange(false);
     }
   };
+
+  const { width, handleMouseDown } = useResizablePanel({
+    storageKey: "rcc_sidebar_width",
+    defaultWidth: 280,
+    minWidth: 200,
+    maxWidth: 400,
+    side: "left",
+  });
 
   const sidebarContent = (
     <>
@@ -176,8 +185,15 @@ export function ThreadSidebar({
   // 固定模式：渲染为 aside 静态面板
   if (isEffectivelyPinned) {
     return (
-      <aside className="w-[280px] shrink-0 h-full bg-card border-r border-(--color-overlay-border) flex flex-col overflow-hidden">
+      <aside
+        className="shrink-0 h-full bg-card border-r border-(--color-overlay-border) flex flex-col overflow-hidden relative"
+        style={{ width }}
+      >
         {sidebarContent}
+        <div
+          className="absolute top-0 bottom-0 right-0 w-1.5 cursor-col-resize z-20 hover:bg-primary/20 active:bg-primary/30 transition-colors"
+          onMouseDown={handleMouseDown}
+        />
       </aside>
     );
   }

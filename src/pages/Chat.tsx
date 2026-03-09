@@ -1,5 +1,5 @@
 import { useRef, useEffect, useState } from "react";
-import { Menu, MoreVertical, Plus, LogOut, Sparkles, Sun, Moon, Monitor, Check, FolderOpen, ChevronDown, Layers } from "lucide-react";
+import { Menu, MoreVertical, Plus, LogOut, Sparkles, Sun, Moon, Monitor, Check, FolderOpen, ChevronDown, Layers, FolderTree } from "lucide-react";
 import { Button } from "../components/ui/button";
 import { Badge } from "../components/ui/badge";
 import {
@@ -12,8 +12,10 @@ import {
 import { MessageList } from "../components/MessageList";
 import { InputBar } from "../components/InputBar";
 import { ThreadSidebar } from "../components/ThreadSidebar";
+import { FileExplorer } from "../components/FileExplorer";
 import { useSidebarPin } from "../hooks/useSidebarPin";
-import type { ConnectionStatus, ChatMessage, Thread, ModelInfo, McpServerInfo, SlashCommandInfo, SessionPreferences, PermissionMode, Attachment, Project } from "../types/messages";
+import { useFileExplorerPin } from "../hooks/useFileExplorerPin";
+import type { ConnectionStatus, ChatMessage, Thread, ModelInfo, McpServerInfo, SlashCommandInfo, SessionPreferences, PermissionMode, Attachment, Project, FileReference, NewFileReference } from "../types/messages";
 import type { Theme } from "../hooks/useTheme";
 
 interface Props {
@@ -54,6 +56,11 @@ interface Props {
   onSwitchProject: (project: Project | null) => void;
   onManageProjects: () => void;
   showProjectLabel: boolean;
+  // 文件资源管理器
+  token: string;
+  references: FileReference[];
+  onAddReference: (ref: NewFileReference) => void;
+  onRemoveReference: (id: string) => void;
 }
 
 export function Chat({
@@ -89,12 +96,18 @@ export function Chat({
   onSwitchProject,
   onManageProjects,
   showProjectLabel,
+  token,
+  references,
+  onAddReference,
+  onRemoveReference,
 }: Props) {
   const bottomRef = useRef<HTMLDivElement>(null);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const isNearBottomRef = useRef(true);
   const { isPinned, isDesktop, isEffectivelyPinned, togglePin } = useSidebarPin();
+  const explorerPin = useFileExplorerPin();
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [explorerOpen, setExplorerOpen] = useState(false);
 
   // 检测用户是否在底部附近
   useEffect(() => {
@@ -210,7 +223,25 @@ export function Chat({
             </DropdownMenuContent>
           </DropdownMenu>
 
-          <DropdownMenu>
+          <div className="flex items-center gap-1">
+            {activeProject && (
+              <Button
+                variant="ghost"
+                size="icon"
+                className="size-9 rounded-xl hover:bg-(--color-overlay-hover)"
+                onClick={() => {
+                  if (explorerPin.isEffectivelyPinned) {
+                    explorerPin.togglePin();
+                  } else {
+                    setExplorerOpen(true);
+                  }
+                }}
+                title="File Explorer"
+              >
+                <FolderTree className="size-5" />
+              </Button>
+            )}
+            <DropdownMenu>
             <DropdownMenuTrigger asChild>
               <Button variant="ghost" size="icon" className="size-9 rounded-xl hover:bg-(--color-overlay-hover)">
                 <MoreVertical className="size-5" />
@@ -244,6 +275,7 @@ export function Chat({
               </DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
+          </div>
         </header>
 
         {/* Messages */}
@@ -298,8 +330,23 @@ export function Chat({
           attachments={attachments}
           onAddAttachments={onAddAttachments}
           onRemoveAttachment={onRemoveAttachment}
+          references={references}
+          onRemoveReference={onRemoveReference}
         />
       </div>
+
+      {/* File Explorer */}
+      <FileExplorer
+        activeProject={activeProject}
+        token={token}
+        isPinned={explorerPin.isPinned}
+        isDesktop={explorerPin.isDesktop}
+        isEffectivelyPinned={explorerPin.isEffectivelyPinned}
+        onTogglePin={explorerPin.togglePin}
+        sheetOpen={explorerOpen}
+        onSheetOpenChange={setExplorerOpen}
+        onAddReference={onAddReference}
+      />
     </div>
   );
 }
