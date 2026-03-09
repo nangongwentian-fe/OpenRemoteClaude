@@ -52,7 +52,7 @@ export default defineConfig({
       output: {
         manualChunks: {
           "markdown": ["streamdown"],
-          "code-highlighter": ["@streamdown/code"],
+          "code-highlighter": ["@streamdown/code", "shiki"],
         },
       },
     },

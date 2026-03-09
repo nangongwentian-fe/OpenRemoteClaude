@@ -129,6 +129,11 @@ html, body, #root {
   field-sizing: content;
 }
 
+/* Shiki dual theme: switch to dark colors */
+.dark .file-viewer-code span[style] {
+  color: var(--shiki-dark) !important;
+}
+
 @keyframes scale-in {
   from { transform: scale(0.8); opacity: 0; }
   to { transform: scale(1); opacity: 1; }

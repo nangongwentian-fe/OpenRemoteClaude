@@ -25,7 +25,7 @@ const HIDDEN_FILES = new Set([
 const MAX_FILE_SIZE = 1024 * 1024; // 1MB
 
 const EXTENSION_LANG: Record<string, string> = {
-  ts: "typescript", tsx: "typescript", js: "javascript", jsx: "javascript",
+  ts: "typescript", tsx: "tsx", js: "javascript", jsx: "jsx",
   py: "python", rs: "rust", go: "go", java: "java", rb: "ruby",
   c: "c", cpp: "cpp", h: "c", hpp: "cpp", cs: "csharp",
   css: "css", scss: "scss", less: "less", html: "html",
