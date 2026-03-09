@@ -162,6 +162,12 @@ export function useMessages() {
         }).filter(Boolean) as DisplayBlock[];
 
         if (blocks.length > 0) {
+          // 取消待执行的 RAF，防止旧 pending 与新 finalized 拼合导致重复渲染
+          if (rafIdRef.current) {
+            cancelAnimationFrame(rafIdRef.current);
+            rafIdRef.current = 0;
+            pendingBlocksRef.current = null;
+          }
           // 将已完成轮次的 blocks 追加到 finalizedBlocks，重置流式 blocks
           streamingRef.current.finalizedBlocks = [
             ...streamingRef.current.finalizedBlocks,
