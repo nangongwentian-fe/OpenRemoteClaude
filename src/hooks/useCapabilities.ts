@@ -8,6 +8,20 @@ import type {
 
 const MODELS_CACHE_KEY = "rcc_models";
 
+function mergeCommandNames(...groups: Array<string[] | undefined>) {
+  const merged = new Map<string, SlashCommandInfo>();
+
+  for (const group of groups) {
+    for (const name of group ?? []) {
+      if (name && !merged.has(name)) {
+        merged.set(name, { name });
+      }
+    }
+  }
+
+  return [...merged.values()];
+}
+
 function loadCachedModels(): ModelInfo[] {
   try {
     const cached = localStorage.getItem(MODELS_CACHE_KEY);
@@ -37,10 +51,15 @@ export function useCapabilities(
       permissionMode?: PermissionMode;
       mcpServers?: McpServerInfo[];
       slashCommands?: string[];
+      skills?: string[];
     }) => {
       if (payload.model) setCurrentModel(payload.model);
       if (payload.permissionMode) setCurrentPermissionMode(payload.permissionMode);
       if (payload.mcpServers) setMcpServers(payload.mcpServers);
+      const mergedCommands = mergeCommandNames(payload.slashCommands, payload.skills);
+      if (mergedCommands.length > 0) {
+        setCommands(mergedCommands);
+      }
     },
     []
   );

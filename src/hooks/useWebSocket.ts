@@ -144,8 +144,8 @@ export function useWebSocket(
     [sendRaw]
   );
 
-  const requestCapabilities = useCallback(() => {
-    sendRaw({ type: "request_capabilities" });
+  const requestCapabilities = useCallback((cwd?: string) => {
+    sendRaw({ type: "request_capabilities", payload: cwd ? { cwd } : undefined });
   }, [sendRaw]);
 
   const interrupt = useCallback(() => {

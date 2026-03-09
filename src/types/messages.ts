@@ -23,6 +23,7 @@ export interface McpServerInfo {
 export interface SlashCommandInfo {
   name: string;
   description?: string;
+  argumentHint?: string;
 }
 
 export interface SessionPreferences {
@@ -70,7 +71,7 @@ export type ClientMessage =
   | { type: "ping" }
   | { type: "set_model"; payload: { model: string } }
   | { type: "set_permission_mode"; payload: { mode: PermissionMode } }
-  | { type: "request_capabilities" }
+  | { type: "request_capabilities"; payload?: { cwd?: string } }
   | { type: "permission_response"; payload: { requestId: string; behavior: "allow" | "deny" } };
 
 // 服务端 → 客户端
@@ -115,6 +116,7 @@ export type ServerMessage =
         permissionMode?: PermissionMode;
         mcpServers?: McpServerInfo[];
         slashCommands?: string[];
+        skills?: string[];
       };
     }
   | {

@@ -27,6 +27,16 @@ function send(ws: ServerWebSocket<WSState>, data: unknown) {
   }
 }
 
+function mapCommands(commands: Array<Record<string, unknown>>) {
+  return commands
+    .map((command) => ({
+      name: String(command.name ?? command.command ?? ""),
+      description: typeof command.description === "string" ? command.description : undefined,
+      argumentHint: typeof command.argumentHint === "string" ? command.argumentHint : undefined,
+    }))
+    .filter((command) => command.name);
+}
+
 function forwardSDKMessage(ws: ServerWebSocket<WSState>, msg: SDKMessage) {
   switch (msg.type) {
     case "stream_event": {
@@ -137,6 +147,9 @@ function forwardSDKMessage(ws: ServerWebSocket<WSState>, msg: SDKMessage) {
         const slashCommands = Array.isArray(msg.slash_commands)
           ? (msg.slash_commands as string[])
           : [];
+        const skills = Array.isArray(msg.skills)
+          ? (msg.skills as string[])
+          : [];
 
         send(ws, {
           type: "system_init",
@@ -147,6 +160,7 @@ function forwardSDKMessage(ws: ServerWebSocket<WSState>, msg: SDKMessage) {
             permissionMode: msg.permissionMode,
             mcpServers,
             slashCommands,
+            skills,
           },
         });
 
@@ -163,7 +177,7 @@ function forwardSDKMessage(ws: ServerWebSocket<WSState>, msg: SDKMessage) {
 
 async function sendCapabilities(ws: ServerWebSocket<WSState>, sessionId: string) {
   try {
-    const caps = await sessionManager.getCapabilities(sessionId);
+    const caps = await sessionManager.getMergedCapabilities(sessionId);
     if (!caps) return;
 
     send(ws, {
@@ -178,10 +192,7 @@ async function sendCapabilities(ws: ServerWebSocket<WSState>, sessionId: string)
           supportsAdaptiveThinking: m.supportsAdaptiveThinking,
           supportsFastMode: m.supportsFastMode,
         })),
-        commands: (caps.commands as Array<Record<string, unknown>>).map((c) => ({
-          name: c.name ?? c.command ?? c,
-          description: c.description,
-        })),
+        commands: mapCommands(caps.commands as Array<Record<string, unknown>>),
         mcpServers: (caps.mcpServers as Array<Record<string, unknown>>).map((s) => ({
           name: s.name,
           status: s.status,
@@ -261,6 +272,7 @@ export function createWSHandlers(jwtSecret: string, db: DataStore) {
           }
 
           const cwd = payload.cwd || process.cwd();
+          const resolvedPrompt = await sessionManager.resolvePrompt(payload.prompt, cwd);
 
           // 构建 SDK 选项
           const sessionOpts: SessionOptions = {};
@@ -292,7 +304,7 @@ export function createWSHandlers(jwtSecret: string, db: DataStore) {
 
           try {
             const sessionId = await sessionManager.startSession(
-              payload.prompt,
+              resolvedPrompt,
               cwd,
               (msg) => forwardSDKMessage(ws, msg as SDKMessage),
               () => {
@@ -386,7 +398,8 @@ export function createWSHandlers(jwtSecret: string, db: DataStore) {
           } else {
             // 无活跃 session 时通过探测获取 capabilities
             try {
-              const caps = await sessionManager.probeCapabilities(process.cwd());
+              const payload = (data.payload as { cwd?: string } | undefined) ?? {};
+              const caps = await sessionManager.probeCapabilities(payload.cwd || process.cwd());
               if (caps) {
                 send(ws, {
                   type: "capabilities",
@@ -400,10 +413,7 @@ export function createWSHandlers(jwtSecret: string, db: DataStore) {
                       supportsAdaptiveThinking: m.supportsAdaptiveThinking,
                       supportsFastMode: m.supportsFastMode,
                     })),
-                    commands: (caps.commands as Array<Record<string, unknown>>).map((c) => ({
-                      name: (c as Record<string, unknown>).name ?? (c as Record<string, unknown>).command ?? c,
-                      description: (c as Record<string, unknown>).description,
-                    })),
+                    commands: mapCommands(caps.commands as Array<Record<string, unknown>>),
                     mcpServers: [],
                   },
                 });

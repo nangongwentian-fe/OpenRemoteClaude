@@ -89,6 +89,9 @@ export default function App() {
   );
 
   const ws = useWebSocket(auth.token, wrappedHandler, auth.logout);
+  const capabilitiesCwd = projectsHook.activeProject?.path
+    || threads.find((t) => t.id === activeThreadId)?.cwd
+    || undefined;
 
   // 当 SDK 返回 sessionId 且当前没有 activeThreadId 时，更新 activeThreadId
   useEffect(() => {
@@ -96,6 +99,12 @@ export default function App() {
       setActiveThreadId(currentSessionId);
     }
   }, [currentSessionId, activeThreadId, setActiveThreadId]);
+
+  useEffect(() => {
+    if (ws.status === "authenticated") {
+      ws.requestCapabilities(capabilitiesCwd);
+    }
+  }, [ws.status, ws.requestCapabilities, capabilitiesCwd]);
 
   if (!auth.token) {
     return (
@@ -154,9 +163,7 @@ export default function App() {
       attachments.clear();
     }
 
-    const cwd = projectsHook.activeProject?.path
-      || threads.find((t) => t.id === activeThreadId)?.cwd
-      || undefined;
+    const cwd = capabilitiesCwd;
 
     addUserMessage(prompt, attachmentInfos);
     ws.sendChat(finalPrompt, cwd, activeThreadId || undefined, preferences);

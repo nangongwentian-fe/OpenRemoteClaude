@@ -1,7 +1,280 @@
 import { query, type Query } from "@anthropic-ai/claude-agent-sdk";
+import { existsSync } from "node:fs";
+import { readdir, readFile } from "node:fs/promises";
+import { homedir } from "node:os";
+import { dirname, extname, join, relative, resolve } from "node:path";
+import { spawn } from "node:child_process";
 
 const SESSION_CLEANUP_DELAY_MS = 60_000; // 完成后 60 秒清除
 const SESSION_CLEANUP_INTERVAL_MS = 300_000; // 每 5 分钟扫描一次（兜底）
+
+export interface SlashCommandDefinition {
+  name: string;
+  description?: string;
+  argumentHint?: string;
+  filePath?: string;
+  body?: string;
+}
+
+type LocalSlashCommand = SlashCommandDefinition & {
+  body: string;
+  filePath: string;
+};
+
+function stripQuotes(value: string) {
+  return value.replace(/^["']|["']$/g, "");
+}
+
+function parseFrontmatter(content: string) {
+  const normalized = content.replace(/\r\n/g, "\n");
+  if (!normalized.startsWith("---\n")) {
+    return { body: normalized.trim(), metadata: {} as Record<string, string> };
+  }
+
+  const end = normalized.indexOf("\n---\n", 4);
+  if (end === -1) {
+    return { body: normalized.trim(), metadata: {} as Record<string, string> };
+  }
+
+  const raw = normalized.slice(4, end);
+  const metadata: Record<string, string> = {};
+
+  for (const line of raw.split("\n")) {
+    const match = line.match(/^([A-Za-z0-9_-]+):\s*(.*)$/);
+    if (!match) continue;
+    metadata[match[1].toLowerCase()] = stripQuotes(match[2].trim());
+  }
+
+  return {
+    body: normalized.slice(end + 5).trim(),
+    metadata,
+  };
+}
+
+function buildCommandName(relativePath: string) {
+  return relativePath
+    .replace(/\\/g, "/")
+    .replace(/\/SKILL\.md$/i, "")
+    .replace(/\.md$/i, "")
+    .split("/")
+    .filter(Boolean)
+    .join(":");
+}
+
+async function collectFiles(dir: string, matcher: (filePath: string) => boolean): Promise<string[]> {
+  if (!existsSync(dir)) return [];
+
+  const entries = await readdir(dir, { withFileTypes: true });
+  const files: string[] = [];
+
+  for (const entry of entries) {
+    const filePath = join(dir, entry.name);
+    if (entry.isDirectory()) {
+      files.push(...await collectFiles(filePath, matcher));
+      continue;
+    }
+    if (entry.isFile() && matcher(filePath)) {
+      files.push(filePath);
+    }
+  }
+
+  return files;
+}
+
+async function loadMarkdownCommand(filePath: string, relativePath: string) {
+  const content = await readFile(filePath, "utf8");
+  const { body, metadata } = parseFrontmatter(content);
+  const name = metadata.name?.trim() || buildCommandName(relativePath);
+  if (!name) return null;
+
+  return {
+    name,
+    description: metadata.description?.trim(),
+    argumentHint: metadata["argument-hint"]?.trim(),
+    filePath,
+    body,
+  } satisfies LocalSlashCommand;
+}
+
+function findNearestClaudeDir(startCwd: string) {
+  let current = resolve(startCwd);
+
+  while (true) {
+    const candidate = join(current, ".claude");
+    if (existsSync(candidate)) {
+      return candidate;
+    }
+
+    const parent = dirname(current);
+    if (parent === current) {
+      return null;
+    }
+    current = parent;
+  }
+}
+
+async function scanClaudeDirectory(claudeDir: string) {
+  const commandsRoot = join(claudeDir, "commands");
+  const skillsRoot = join(claudeDir, "skills");
+
+  const [commandFiles, skillFiles] = await Promise.all([
+    collectFiles(commandsRoot, (filePath) => extname(filePath).toLowerCase() === ".md"),
+    collectFiles(skillsRoot, (filePath) => filePath.endsWith("/SKILL.md") || filePath.endsWith("\\SKILL.md")),
+  ]);
+
+  const [commands, skills] = await Promise.all([
+    Promise.all(
+      commandFiles.map((filePath) =>
+        loadMarkdownCommand(filePath, relative(commandsRoot, filePath))
+      )
+    ),
+    Promise.all(
+      skillFiles.map((filePath) =>
+        loadMarkdownCommand(filePath, relative(skillsRoot, filePath))
+      )
+    ),
+  ]);
+
+  return [...commands, ...skills].filter((command): command is LocalSlashCommand => Boolean(command));
+}
+
+async function discoverLocalSlashCommands(cwd: string) {
+  const projectClaudeDir = findNearestClaudeDir(cwd);
+  const userClaudeDir = join(homedir(), ".claude");
+  const dirs = [projectClaudeDir, existsSync(userClaudeDir) ? userClaudeDir : null].filter(
+    (dir): dir is string => Boolean(dir)
+  );
+
+  const discovered = await Promise.all(dirs.map((dir) => scanClaudeDirectory(dir)));
+  const merged = new Map<string, LocalSlashCommand>();
+
+  for (const group of discovered) {
+    for (const command of group) {
+      if (!merged.has(command.name)) {
+        merged.set(command.name, command);
+      }
+    }
+  }
+
+  return [...merged.values()];
+}
+
+function mergeCommands(primary: SlashCommandDefinition[], secondary: SlashCommandDefinition[]) {
+  const merged = new Map<string, SlashCommandDefinition>();
+
+  for (const command of [...primary, ...secondary]) {
+    if (!merged.has(command.name)) {
+      merged.set(command.name, command);
+    }
+  }
+
+  return [...merged.values()];
+}
+
+function parseSlashInvocation(prompt: string) {
+  const trimmed = prompt.trim();
+  if (!trimmed.startsWith("/")) return null;
+
+  const withoutSlash = trimmed.slice(1);
+  const firstWhitespace = withoutSlash.search(/\s/);
+  if (firstWhitespace === -1) {
+    return { args: "", name: withoutSlash };
+  }
+
+  return {
+    name: withoutSlash.slice(0, firstWhitespace),
+    args: withoutSlash.slice(firstWhitespace).trim(),
+  };
+}
+
+function applyCommandArguments(body: string, args: string) {
+  const positional = args ? args.split(/\s+/) : [];
+  let expanded = body.replace(/\$ARGUMENTS\b/g, args);
+
+  positional.forEach((value, index) => {
+    expanded = expanded.replace(new RegExp(`\\$${index + 1}(?!\\d)`, "g"), value);
+  });
+
+  return expanded;
+}
+
+function runShellCommand(command: string, cwd: string) {
+  return new Promise<string>((resolveCommand) => {
+    const child = spawn(command, {
+      cwd,
+      env: process.env,
+      shell: true,
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+
+    let stdout = "";
+    let stderr = "";
+    let settled = false;
+
+    const finish = (output: string) => {
+      if (settled) return;
+      settled = true;
+      resolveCommand(output.trim());
+    };
+
+    child.stdout.on("data", (chunk) => {
+      stdout += chunk.toString();
+    });
+    child.stderr.on("data", (chunk) => {
+      stderr += chunk.toString();
+    });
+    child.on("error", (error) => {
+      finish(`Command failed: ${error.message}`);
+    });
+    child.on("close", (code) => {
+      const combined = [stdout.trim(), stderr.trim()].filter(Boolean).join("\n");
+      if (combined) {
+        finish(combined);
+      } else if (code && code !== 0) {
+        finish(`Command exited with status ${code}`);
+      } else {
+        finish("(no output)");
+      }
+    });
+
+    setTimeout(() => {
+      if (!settled) {
+        child.kill("SIGTERM");
+        finish("Command timed out after 10s");
+      }
+    }, 10_000);
+  });
+}
+
+async function expandBangCommands(body: string, cwd: string) {
+  const matches = [...body.matchAll(/!`([^`]+)`/g)];
+  if (matches.length === 0) return body;
+
+  let expanded = body;
+  for (const match of matches) {
+    const command = match[1]?.trim();
+    if (!command) continue;
+
+    const output = await runShellCommand(command, cwd);
+    const replacement = `\n\`\`\`text\n${output || "(no output)"}\n\`\`\``;
+    expanded = expanded.replace(match[0], replacement);
+  }
+
+  return expanded;
+}
+
+async function buildLocalCommandPrompt(command: LocalSlashCommand, args: string, cwd: string) {
+  const withArgs = applyCommandArguments(command.body, args);
+  const withCommandOutput = await expandBangCommands(withArgs, cwd);
+
+  return [
+    `# Local Claude Code Command`,
+    `Source: ${command.filePath}`,
+    `Invocation: /${command.name}${args ? ` ${args}` : ""}`,
+    "",
+    withCommandOutput,
+  ].join("\n");
+}
 
 export interface SessionInfo {
   id: string;
@@ -206,6 +479,35 @@ export class ClaudeSessionManager {
     }
   }
 
+  async getMergedCapabilities(sessionId: string) {
+    const session = this.sessions.get(sessionId);
+    if (!session?.queryHandle) return null;
+
+    try {
+      const [models, sdkCommands, mcpStatus, localCommands] = await Promise.all([
+        session.queryHandle.supportedModels(),
+        session.queryHandle.supportedCommands(),
+        session.queryHandle.mcpServerStatus(),
+        discoverLocalSlashCommands(session.cwd),
+      ]);
+
+      return {
+        models,
+        commands: mergeCommands(
+          localCommands,
+          (sdkCommands as Array<Record<string, unknown>>).map((command) => ({
+            name: String(command.name ?? command.command ?? ""),
+            description: typeof command.description === "string" ? command.description : undefined,
+            argumentHint: typeof command.argumentHint === "string" ? command.argumentHint : undefined,
+          }))
+        ),
+        mcpServers: mcpStatus,
+      };
+    } catch {
+      return null;
+    }
+  }
+
   async setModel(sessionId: string, model: string) {
     const session = this.sessions.get(sessionId);
     if (session?.queryHandle) {
@@ -295,9 +597,17 @@ export class ClaudeSessionManager {
       });
 
       const initResult = await q.initializationResult();
+      const localCommands = await discoverLocalSlashCommands(cwd);
       return {
         models: initResult.models,
-        commands: initResult.commands,
+        commands: mergeCommands(
+          localCommands,
+          (initResult.commands as Array<Record<string, unknown>>).map((command) => ({
+            name: String(command.name ?? command.command ?? ""),
+            description: typeof command.description === "string" ? command.description : undefined,
+            argumentHint: typeof command.argumentHint === "string" ? command.argumentHint : undefined,
+          }))
+        ),
         mcpServers: [],
       };
     } catch {
@@ -306,5 +616,16 @@ export class ClaudeSessionManager {
       abortController.abort();
       q = null;
     }
+  }
+
+  async resolvePrompt(prompt: string, cwd: string) {
+    const invocation = parseSlashInvocation(prompt);
+    if (!invocation) return prompt;
+
+    const localCommands = await discoverLocalSlashCommands(cwd);
+    const command = localCommands.find((item) => item.name === invocation.name);
+    if (!command) return prompt;
+
+    return buildLocalCommandPrompt(command, invocation.args, cwd);
   }
 }
