@@ -122,6 +122,7 @@ export function useWebSocket(
           ...(options?.model ? { model: options.model } : {}),
           ...(options?.effort ? { effort: options.effort } : {}),
           ...(options?.thinking ? { thinking: options.thinking } : {}),
+          ...(options?.permissionMode ? { permissionMode: options.permissionMode } : {}),
         },
       });
     },

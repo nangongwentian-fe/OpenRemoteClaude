@@ -1,5 +1,5 @@
 import { useState, useCallback } from "react";
-import type { SessionPreferences, EffortLevel, ThinkingMode } from "../types/messages";
+import type { SessionPreferences } from "../types/messages";
 
 const STORAGE_KEY = "rcc_preferences";
 
@@ -7,6 +7,7 @@ const defaults: SessionPreferences = {
   model: "claude-sonnet-4-20250514",
   effort: "high",
   thinking: "adaptive",
+  permissionMode: "acceptEdits",
 };
 
 function loadPreferences(): SessionPreferences {

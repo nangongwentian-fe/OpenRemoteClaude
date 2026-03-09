@@ -11,7 +11,7 @@ import { useProjects } from "./hooks/useProjects";
 import { Login } from "./pages/Login";
 import { Chat } from "./pages/Chat";
 import { ProjectManager } from "./components/ProjectManager";
-import type { ServerMessage, Project, ModelInfo } from "./types/messages";
+import type { ServerMessage, Project, ModelInfo, PermissionMode } from "./types/messages";
 
 const MODEL_CHOSEN_KEY = "rcc_model_chosen";
 
@@ -19,7 +19,7 @@ export default function App() {
   const { theme, resolved, setTheme } = useTheme();
   const auth = useAuth();
   const { preferences, updatePreference } = usePreferences();
-  const capabilities = useCapabilities(preferences.model);
+  const capabilities = useCapabilities(preferences.model, preferences.permissionMode);
   const attachments = useAttachments();
   const projectsHook = useProjects(auth.token);
   const [projectManagerOpen, setProjectManagerOpen] = useState(false);
@@ -57,6 +57,9 @@ export default function App() {
       }
       if (msg.type === "system_init") {
         capabilities.handleSystemInit(msg.payload);
+        if (msg.payload.permissionMode) {
+          updatePreferenceRef.current("permissionMode", msg.payload.permissionMode);
+        }
       }
       if (msg.type === "capabilities") {
         capabilities.handleCapabilities(msg.payload);
@@ -79,6 +82,7 @@ export default function App() {
       }
       if (msg.type === "permission_mode_changed") {
         capabilities.setCurrentPermissionMode(msg.payload.mode);
+        updatePreferenceRef.current("permissionMode", msg.payload.mode);
       }
     },
     [handleServerMessage, capabilities]
@@ -119,11 +123,14 @@ export default function App() {
   );
 
   const handleSetPermissionMode = useCallback(
-    (mode: import("./types/messages").PermissionMode) => {
+    (mode: PermissionMode) => {
       capabilities.setCurrentPermissionMode(mode);
-      ws.setPermissionMode(mode);
+      updatePreference("permissionMode", mode);
+      if (isProcessing) {
+        ws.setPermissionMode(mode);
+      }
     },
-    [capabilities, ws]
+    [capabilities, isProcessing, updatePreference, ws]
   );
 
   const handlePermissionRespond = useCallback(

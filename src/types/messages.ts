@@ -29,6 +29,7 @@ export interface SessionPreferences {
   model?: string;
   effort?: EffortLevel;
   thinking?: ThinkingMode;
+  permissionMode?: PermissionMode;
 }
 
 export interface Attachment {
@@ -61,6 +62,7 @@ export type ClientMessage =
         model?: string;
         effort?: EffortLevel;
         thinking?: ThinkingMode;
+        permissionMode?: PermissionMode;
       };
     }
   | { type: "interrupt" }

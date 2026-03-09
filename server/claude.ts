@@ -31,6 +31,7 @@ export interface SessionOptions {
   model?: string;
   effort?: "low" | "medium" | "high" | "max";
   thinking?: { type: "adaptive" } | { type: "enabled"; budgetTokens?: number } | { type: "disabled" };
+  permissionMode?: "default" | "acceptEdits" | "plan" | "dontAsk";
 }
 
 export class ClaudeSessionManager {
@@ -135,7 +136,7 @@ export class ClaudeSessionManager {
           "NotebookEdit",
           "LSP",
         ],
-        permissionMode: "acceptEdits",
+        permissionMode: options?.permissionMode ?? "acceptEdits",
         maxTurns: 50,
         includePartialMessages: true,
         canUseTool: async (toolName, input, opts) => {

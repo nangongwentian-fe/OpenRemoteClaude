@@ -19,12 +19,17 @@ function loadCachedModels(): ModelInfo[] {
   return [];
 }
 
-export function useCapabilities(initialModel?: string) {
+export function useCapabilities(
+  initialModel?: string,
+  initialPermissionMode?: PermissionMode
+) {
   const [models, setModels] = useState<ModelInfo[]>(loadCachedModels);
   const [commands, setCommands] = useState<SlashCommandInfo[]>([]);
   const [mcpServers, setMcpServers] = useState<McpServerInfo[]>([]);
   const [currentModel, setCurrentModel] = useState(initialModel || "");
-  const [currentPermissionMode, setCurrentPermissionMode] = useState<PermissionMode>("acceptEdits");
+  const [currentPermissionMode, setCurrentPermissionMode] = useState<PermissionMode>(
+    initialPermissionMode || "acceptEdits"
+  );
 
   const handleSystemInit = useCallback(
     (payload: {

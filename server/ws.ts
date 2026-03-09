@@ -249,6 +249,7 @@ export function createWSHandlers(jwtSecret: string, db: DataStore) {
             model?: string;
             effort?: string;
             thinking?: string;
+            permissionMode?: SessionOptions["permissionMode"];
           };
 
           if (!payload?.prompt) {
@@ -273,6 +274,9 @@ export function createWSHandlers(jwtSecret: string, db: DataStore) {
             } else if (payload.thinking === "enabled") {
               sessionOpts.thinking = { type: "enabled" };
             }
+          }
+          if (payload.permissionMode) {
+            sessionOpts.permissionMode = payload.permissionMode;
           }
 
           send(ws, { type: "chat_started", payload: { cwd } });
