@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { memo, useState } from "react";
 import { createPortal } from "react-dom";
 import { FileText, X } from "lucide-react";
 import type { ChatMessage, DisplayBlock, AttachmentInfo } from "../types/messages";
@@ -14,7 +14,15 @@ interface Props {
   onPermissionRespond?: (requestId: string, behavior: "allow" | "deny") => void;
 }
 
-export function MessageBubble({ message, onPermissionRespond }: Props) {
+function getBlockKey(block: DisplayBlock, index: number): string {
+  switch (block.type) {
+    case "tool_use": return `tool-${block.id}`;
+    case "permission_request": return `perm-${block.requestId}`;
+    default: return `${block.type}-${index}`;
+  }
+}
+
+export const MessageBubble = memo(function MessageBubble({ message, onPermissionRespond }: Props) {
   const isUser = message.role === "user";
 
   return (
@@ -35,7 +43,7 @@ export function MessageBubble({ message, onPermissionRespond }: Props) {
         )}
       >
         {message.blocks.map((block, i) => (
-          <BlockRenderer key={i} block={block} isUser={isUser} onPermissionRespond={onPermissionRespond} />
+          <BlockRenderer key={getBlockKey(block, i)} block={block} isUser={isUser} onPermissionRespond={onPermissionRespond} />
         ))}
         {message.isStreaming && <span className="streaming-cursor" />}
         {message.attachments && message.attachments.length > 0 && (
@@ -44,7 +52,7 @@ export function MessageBubble({ message, onPermissionRespond }: Props) {
       </div>
     </div>
   );
-}
+});
 
 function BlockRenderer({
   block,

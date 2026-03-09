@@ -12,10 +12,14 @@ export function useAuth() {
 
   // 检查是否已设置密码
   useEffect(() => {
-    fetch("/api/auth/status")
+    const controller = new AbortController();
+    fetch("/api/auth/status", { signal: controller.signal })
       .then((r) => r.json())
       .then((data: { initialized: boolean }) => setInitialized(data.initialized))
-      .catch(() => setInitialized(false));
+      .catch((err) => {
+        if (err.name !== "AbortError") setInitialized(false);
+      });
+    return () => controller.abort();
   }, []);
 
   const setup = useCallback(async (password: string) => {

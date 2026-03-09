@@ -51,7 +51,8 @@ export function useWebSocket(
       reconnectAttempts.current = 0;
       // 发送认证
       ws.send(JSON.stringify({ type: "auth", token }));
-      // 启动心跳
+      // 清除可能残留的旧心跳后再启动新心跳
+      if (heartbeatTimer.current) clearInterval(heartbeatTimer.current);
       heartbeatTimer.current = setInterval(() => {
         if (ws.readyState === WebSocket.OPEN) {
           ws.send(JSON.stringify({ type: "ping" }));

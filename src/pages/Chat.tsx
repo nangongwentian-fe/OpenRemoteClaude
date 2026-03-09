@@ -91,11 +91,28 @@ export function Chat({
   showProjectLabel,
 }: Props) {
   const bottomRef = useRef<HTMLDivElement>(null);
+  const scrollContainerRef = useRef<HTMLDivElement>(null);
+  const isNearBottomRef = useRef(true);
   const { isPinned, isDesktop, isEffectivelyPinned, togglePin } = useSidebarPin();
   const [sidebarOpen, setSidebarOpen] = useState(false);
 
+  // 检测用户是否在底部附近
   useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: "smooth" });
+    const container = scrollContainerRef.current;
+    if (!container) return;
+    const handleScroll = () => {
+      const { scrollTop, scrollHeight, clientHeight } = container;
+      isNearBottomRef.current = scrollHeight - scrollTop - clientHeight < 100;
+    };
+    container.addEventListener("scroll", handleScroll, { passive: true });
+    return () => container.removeEventListener("scroll", handleScroll);
+  }, []);
+
+  // 仅在接近底部时自动滚动，流式传输中使用 instant 避免动画叠加
+  useEffect(() => {
+    if (isNearBottomRef.current) {
+      bottomRef.current?.scrollIntoView({ behavior: "instant" });
+    }
   }, [messages]);
 
   const statusColor =
@@ -229,7 +246,7 @@ export function Chat({
         </header>
 
         {/* Messages */}
-        <main className="flex-1 overflow-y-auto p-4 [-webkit-overflow-scrolling:touch]">
+        <main ref={scrollContainerRef} className="flex-1 overflow-y-auto p-4 [-webkit-overflow-scrolling:touch]">
           {messages.length === 0 && (
             <div className="flex flex-col items-center justify-center h-full text-center px-6">
               <div className="relative mb-6">

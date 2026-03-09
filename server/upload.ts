@@ -30,7 +30,9 @@ async function cleanupExpiredFiles() {
   }
 }
 
+// 启动时清理 + 每 6 小时周期清理
 cleanupExpiredFiles();
+setInterval(cleanupExpiredFiles, 6 * 60 * 60 * 1000);
 
 export function createUploadRoutes(jwtSecret: string) {
   const app = new Hono();
@@ -67,8 +69,7 @@ export function createUploadRoutes(jwtSecret: string) {
     const fileName = `${fileId}-${safeName}`;
     const filePath = join(UPLOAD_DIR, fileName);
 
-    const buffer = await file.arrayBuffer();
-    await Bun.write(filePath, buffer);
+    await Bun.write(filePath, file);
 
     return c.json({
       fileId,

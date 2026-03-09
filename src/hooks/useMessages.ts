@@ -1,4 +1,4 @@
-import { useState, useCallback, useRef } from "react";
+import { useState, useCallback, useRef, useEffect } from "react";
 import type {
   ChatMessage,
   DisplayBlock,
@@ -17,6 +17,16 @@ export function useMessages() {
   }>({ blocks: [], toolInputs: new Map(), finalizedBlocks: [] });
   const rafIdRef = useRef<number>(0);
   const pendingBlocksRef = useRef<DisplayBlock[] | null>(null);
+
+  // 组件卸载时取消 pending RAF，防止 setState on unmounted
+  useEffect(() => {
+    return () => {
+      if (rafIdRef.current) {
+        cancelAnimationFrame(rafIdRef.current);
+        rafIdRef.current = 0;
+      }
+    };
+  }, []);
 
   const addUserMessage = useCallback((prompt: string, attachments?: AttachmentInfo[]) => {
     const msg: ChatMessage = {
@@ -169,10 +179,7 @@ export function useMessages() {
             pendingBlocksRef.current = null;
           }
           // 将已完成轮次的 blocks 追加到 finalizedBlocks，重置流式 blocks
-          streamingRef.current.finalizedBlocks = [
-            ...streamingRef.current.finalizedBlocks,
-            ...blocks,
-          ];
+          streamingRef.current.finalizedBlocks.push(...blocks);
           streamingRef.current.blocks = [];
           streamingRef.current.toolInputs = new Map();
 
@@ -232,15 +239,32 @@ export function useMessages() {
 
       case "error": {
         setIsProcessing(false);
-        setMessages((prev) => [
-          ...prev,
-          {
+        // 取消待执行的 RAF
+        if (rafIdRef.current) {
+          cancelAnimationFrame(rafIdRef.current);
+          rafIdRef.current = 0;
+          pendingBlocksRef.current = null;
+        }
+        streamingRef.current = { blocks: [], toolInputs: new Map(), finalizedBlocks: [] };
+        // 清理旧的 streaming 占位符 + 添加 error 消息
+        setMessages((prev) => {
+          const updated = [...prev];
+          const lastIdx = updated.length - 1;
+          if (lastIdx >= 0 && updated[lastIdx].isStreaming) {
+            if (updated[lastIdx].blocks.length === 0) {
+              updated.pop();
+            } else {
+              updated[lastIdx] = { ...updated[lastIdx], isStreaming: false };
+            }
+          }
+          updated.push({
             id: crypto.randomUUID(),
             role: "assistant",
             blocks: [{ type: "text", text: `Error: ${msg.payload.message}` }],
             timestamp: Date.now(),
-          },
-        ]);
+          });
+          return updated;
+        });
         break;
       }
 
@@ -290,6 +314,12 @@ export function useMessages() {
   }
 
   const clearMessages = useCallback(() => {
+    if (rafIdRef.current) {
+      cancelAnimationFrame(rafIdRef.current);
+      rafIdRef.current = 0;
+      pendingBlocksRef.current = null;
+    }
+    streamingRef.current = { blocks: [], toolInputs: new Map(), finalizedBlocks: [] };
     setMessages([]);
     setIsProcessing(false);
     setCurrentSessionId(null);

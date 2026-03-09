@@ -9,7 +9,7 @@ export default defineConfig({
     react(),
     tailwindcss(),
     VitePWA({
-      registerType: "autoUpdate",
+      registerType: "prompt",
       manifest: {
         name: "Remote Claude Code",
         short_name: "RemoteCC",
@@ -48,5 +48,13 @@ export default defineConfig({
   },
   build: {
     outDir: "dist/client",
+    rollupOptions: {
+      output: {
+        manualChunks: {
+          "markdown": ["streamdown"],
+          "code-highlighter": ["@streamdown/code"],
+        },
+      },
+    },
   },
 });

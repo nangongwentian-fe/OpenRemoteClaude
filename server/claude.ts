@@ -1,7 +1,7 @@
 import { query, type Query } from "@anthropic-ai/claude-agent-sdk";
 
 const SESSION_CLEANUP_DELAY_MS = 60_000; // 完成后 60 秒清除
-const SESSION_CLEANUP_INTERVAL_MS = 120_000; // 每 2 分钟扫描一次
+const SESSION_CLEANUP_INTERVAL_MS = 300_000; // 每 5 分钟扫描一次（兜底）
 
 export interface SessionInfo {
   id: string;
@@ -65,6 +65,15 @@ export class ClaudeSessionManager {
     session.isActive = false;
     session.queryHandle = null;
     session.completedAt = Date.now();
+
+    // 精确定时清理，不依赖扫描间隔
+    setTimeout(() => {
+      const s = this.sessions.get(sessionId);
+      if (s && s.completedAt !== null) {
+        this.sessions.delete(sessionId);
+        console.log(`[Session] Cleaned up session ${sessionId}`);
+      }
+    }, SESSION_CLEANUP_DELAY_MS);
   }
 
   dispose() {
@@ -156,7 +165,7 @@ export class ClaudeSessionManager {
                 session.pendingPermissions.delete(requestId);
                 resolve({ behavior: "deny", message: "Request aborted" });
               }
-            });
+            }, { once: true });
           });
         },
       },

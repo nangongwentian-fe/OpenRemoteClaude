@@ -118,9 +118,10 @@ html, body, #root {
   height: 18px;
   background: var(--color-primary);
   margin-left: 2px;
-  animation: blink 0.8s ease-in-out infinite;
+  animation: blink 0.8s steps(1) infinite;
   vertical-align: text-bottom;
   border-radius: 1px;
+  will-change: opacity;
 }
 
 /* InputBar: CSS native textarea auto-resize (Chrome 123+, Firefox 133+) */

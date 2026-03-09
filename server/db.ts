@@ -1,4 +1,4 @@
-import { Database } from "bun:sqlite";
+import { Database, type Statement } from "bun:sqlite";
 import { join } from "node:path";
 import { mkdirSync } from "node:fs";
 
@@ -15,6 +15,15 @@ function ensureDataDir() {
 
 export class DataStore {
   private db: Database;
+  private stmts: {
+    getConfig: Statement;
+    setConfig: Statement;
+    createSession: Statement;
+    completeSession: Statement;
+    saveMessage: Statement;
+    getRecentSessions: Statement;
+    getSessionMessages: Statement;
+  };
 
   constructor() {
     ensureDataDir();
@@ -22,6 +31,7 @@ export class DataStore {
     this.db.exec("PRAGMA journal_mode = WAL");
     this.db.exec("PRAGMA foreign_keys = ON");
     this.init();
+    this.stmts = this.prepareStatements();
   }
 
   private init() {
@@ -55,82 +65,66 @@ export class DataStore {
     `);
   }
 
+  private prepareStatements() {
+    return {
+      getConfig: this.db.query("SELECT value FROM config WHERE key = ?"),
+      setConfig: this.db.query("INSERT OR REPLACE INTO config (key, value) VALUES (?, ?)"),
+      createSession: this.db.query("INSERT INTO sessions (id, cwd) VALUES (?, ?)"),
+      completeSession: this.db.query("UPDATE sessions SET ended_at = unixepoch(), is_error = ?, num_turns = ?, duration_ms = ? WHERE id = ?"),
+      saveMessage: this.db.query("INSERT INTO messages (session_id, role, content) VALUES (?, ?, ?)"),
+      getRecentSessions: this.db.query("SELECT * FROM sessions ORDER BY started_at DESC LIMIT ?"),
+      getSessionMessages: this.db.query("SELECT * FROM messages WHERE session_id = ? ORDER BY timestamp ASC"),
+    };
+  }
+
   getPasswordHash(): string | null {
-    const row = this.db
-      .query("SELECT value FROM config WHERE key = ?")
-      .get("password_hash") as { value: string } | null;
+    const row = this.stmts.getConfig.get("password_hash") as { value: string } | null;
     return row?.value ?? null;
   }
 
   setPasswordHash(hash: string) {
-    this.db
-      .query("INSERT OR REPLACE INTO config (key, value) VALUES (?, ?)")
-      .run("password_hash", hash);
+    this.stmts.setConfig.run("password_hash", hash);
   }
 
   createSession(id: string, cwd: string) {
-    this.db
-      .query("INSERT INTO sessions (id, cwd) VALUES (?, ?)")
-      .run(id, cwd);
+    this.stmts.createSession.run(id, cwd);
   }
 
   completeSession(
     id: string,
     result: { isError: boolean; numTurns: number; durationMs: number }
   ) {
-    this.db
-      .query(
-        "UPDATE sessions SET ended_at = unixepoch(), is_error = ?, num_turns = ?, duration_ms = ? WHERE id = ?"
-      )
-      .run(result.isError ? 1 : 0, result.numTurns, result.durationMs, id);
+    this.stmts.completeSession.run(result.isError ? 1 : 0, result.numTurns, result.durationMs, id);
   }
 
   saveMessage(sessionId: string, role: string, content: unknown) {
-    this.db
-      .query(
-        "INSERT INTO messages (session_id, role, content) VALUES (?, ?, ?)"
-      )
-      .run(sessionId, role, JSON.stringify(content));
+    this.stmts.saveMessage.run(sessionId, role, JSON.stringify(content));
   }
 
   getJwtSecret(): string | null {
-    const row = this.db
-      .query("SELECT value FROM config WHERE key = ?")
-      .get("jwt_secret") as { value: string } | null;
+    const row = this.stmts.getConfig.get("jwt_secret") as { value: string } | null;
     return row?.value ?? null;
   }
 
   setJwtSecret(secret: string) {
-    this.db
-      .query("INSERT OR REPLACE INTO config (key, value) VALUES (?, ?)")
-      .run("jwt_secret", secret);
+    this.stmts.setConfig.run("jwt_secret", secret);
   }
 
   getProjects(): Array<{ path: string; name: string; addedAt: number }> {
-    const row = this.db
-      .query("SELECT value FROM config WHERE key = ?")
-      .get("projects") as { value: string } | null;
+    const row = this.stmts.getConfig.get("projects") as { value: string } | null;
     return row ? JSON.parse(row.value) : [];
   }
 
   setProjects(projects: Array<{ path: string; name: string; addedAt: number }>) {
-    this.db
-      .query("INSERT OR REPLACE INTO config (key, value) VALUES (?, ?)")
-      .run("projects", JSON.stringify(projects));
+    this.stmts.setConfig.run("projects", JSON.stringify(projects));
   }
 
   getRecentSessions(limit = 20) {
-    return this.db
-      .query("SELECT * FROM sessions ORDER BY started_at DESC LIMIT ?")
-      .all(limit);
+    return this.stmts.getRecentSessions.all(limit);
   }
 
   getSessionMessages(sessionId: string) {
-    return this.db
-      .query(
-        "SELECT * FROM messages WHERE session_id = ? ORDER BY timestamp ASC"
-      )
-      .all(sessionId);
+    return this.stmts.getSessionMessages.all(sessionId);
   }
 
   close() {
