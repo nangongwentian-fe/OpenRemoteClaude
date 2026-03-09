@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { Brain, ChevronRight, ChevronDown } from "lucide-react";
+import { MarkdownRenderer } from "./MarkdownRenderer";
 import {
   Collapsible,
   CollapsibleContent,
@@ -40,8 +41,8 @@ export function ThinkingBlock({ thinking, collapsed: initialCollapsed }: Props) 
         </CollapsibleTrigger>
 
         <CollapsibleContent>
-          <div className="px-3 pb-3 text-[13px] text-muted-foreground/80 leading-relaxed whitespace-pre-wrap max-h-75 overflow-y-auto">
-            {thinking}
+          <div className="px-3 pb-3 text-[13px] text-muted-foreground/80 max-h-75 overflow-y-auto">
+            <MarkdownRenderer text={thinking} />
           </div>
         </CollapsibleContent>
       </div>
