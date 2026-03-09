@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import {
   FileText,
   Pencil,
@@ -49,6 +49,10 @@ interface Props {
 
 export function ToolCallCard({ name, input, result, isError, collapsed: initialCollapsed }: Props) {
   const [collapsed, setCollapsed] = useState(initialCollapsed);
+
+  useEffect(() => {
+    if (initialCollapsed) setCollapsed(true);
+  }, [initialCollapsed]);
   const Icon = TOOL_ICONS[name] || ChevronRight;
   const summary = getSummary(name, input);
 

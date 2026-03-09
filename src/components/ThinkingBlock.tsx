@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Brain, ChevronRight, ChevronDown } from "lucide-react";
 import { MarkdownRenderer } from "./MarkdownRenderer";
 import {
@@ -14,6 +14,10 @@ interface Props {
 
 export function ThinkingBlock({ thinking, collapsed: initialCollapsed }: Props) {
   const [collapsed, setCollapsed] = useState(initialCollapsed);
+
+  useEffect(() => {
+    if (initialCollapsed) setCollapsed(true);
+  }, [initialCollapsed]);
 
   if (!thinking) return null;
 

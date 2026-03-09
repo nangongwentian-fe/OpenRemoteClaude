@@ -13,8 +13,7 @@ export function useMessages() {
   const streamingRef = useRef<{
     blocks: DisplayBlock[];
     toolInputs: Map<number, string>;
-    finalizedBlocks: DisplayBlock[];
-  }>({ blocks: [], toolInputs: new Map(), finalizedBlocks: [] });
+  }>({ blocks: [], toolInputs: new Map() });
   const rafIdRef = useRef<number>(0);
   const pendingBlocksRef = useRef<DisplayBlock[] | null>(null);
 
@@ -43,7 +42,7 @@ export function useMessages() {
     switch (msg.type) {
       case "chat_started": {
         setIsProcessing(true);
-        streamingRef.current = { blocks: [], toolInputs: new Map(), finalizedBlocks: [] };
+        streamingRef.current = { blocks: [], toolInputs: new Map() };
         // 创建一个空的 assistant 消息占位
         const placeholder: ChatMessage = {
           id: crypto.randomUUID(),
@@ -118,7 +117,7 @@ export function useMessages() {
       }
 
       case "assistant_message": {
-        // 完整的 assistant 消息，用它来补充工具结果等信息
+        // 完整的 assistant 消息，每轮独立成一个气泡
         const blocks: DisplayBlock[] = msg.payload.content.map((block) => {
           if (block.type === "text")
             return { type: "text" as const, text: block.text };
@@ -140,29 +139,27 @@ export function useMessages() {
               collapsed: true,
             };
           if (block.type === "tool_result") {
-            // 同步更新 finalizedBlocks 中对应的 tool_use
             const resultContent =
               typeof block.content === "string"
                 ? block.content
                 : JSON.stringify(block.content);
-            for (const fb of streamingRef.current.finalizedBlocks) {
-              if (fb.type === "tool_use" && fb.id === block.tool_use_id) {
-                fb.result = resultContent;
-                fb.isError = block.is_error;
-              }
-            }
-            // 同时更新已渲染的消息
+            // 向后搜索所有已渲染的消息，找到对应 tool_use 并注入 result
             setMessages((prev) => {
               const updated = [...prev];
-              const last = updated[updated.length - 1];
-              if (last?.role === "assistant") {
-                const updatedBlocks = last.blocks.map((b) => {
-                  if (b.type === "tool_use" && b.id === block.tool_use_id) {
-                    return { ...b, result: resultContent, isError: block.is_error };
+              for (let i = updated.length - 1; i >= 0; i--) {
+                if (updated[i].role !== "assistant") continue;
+                const blockIdx = updated[i].blocks.findIndex(
+                  (b) => b.type === "tool_use" && b.id === block.tool_use_id
+                );
+                if (blockIdx !== -1) {
+                  const newBlocks = [...updated[i].blocks];
+                  const tb = newBlocks[blockIdx];
+                  if (tb.type === "tool_use") {
+                    newBlocks[blockIdx] = { ...tb, result: resultContent, isError: block.is_error };
                   }
-                  return b;
-                });
-                updated[updated.length - 1] = { ...last, blocks: updatedBlocks };
+                  updated[i] = { ...updated[i], blocks: newBlocks };
+                  break;
+                }
               }
               return updated;
             });
@@ -172,34 +169,32 @@ export function useMessages() {
         }).filter(Boolean) as DisplayBlock[];
 
         if (blocks.length > 0) {
-          // 取消待执行的 RAF，防止旧 pending 与新 finalized 拼合导致重复渲染
+          // 取消待执行的 RAF
           if (rafIdRef.current) {
             cancelAnimationFrame(rafIdRef.current);
             rafIdRef.current = 0;
             pendingBlocksRef.current = null;
           }
-          // 将已完成轮次的 blocks 追加到 finalizedBlocks，重置流式 blocks
-          streamingRef.current.finalizedBlocks.push(...blocks);
+          // 重置流式 blocks，为下一轮做准备
           streamingRef.current.blocks = [];
           streamingRef.current.toolInputs = new Map();
 
-          const allBlocks = [...streamingRef.current.finalizedBlocks];
+          // 将当前 streaming 消息替换为本轮 finalized blocks，不再累积
           setMessages((prev) => {
             const updated = [...prev];
             const lastIdx = updated.length - 1;
-            if (lastIdx >= 0 && updated[lastIdx].isStreaming) {
+            if (lastIdx >= 0 && updated[lastIdx].role === "assistant" && updated[lastIdx].isStreaming) {
               updated[lastIdx] = {
                 ...updated[lastIdx],
-                blocks: allBlocks,
-                isStreaming: true,
+                blocks,
+                isStreaming: false,
               };
             } else {
               updated.push({
                 id: crypto.randomUUID(),
                 role: "assistant",
-                blocks: allBlocks,
+                blocks,
                 timestamp: Date.now(),
-                isStreaming: true,
               });
             }
             return updated;
@@ -222,15 +217,20 @@ export function useMessages() {
           rafIdRef.current = 0;
           pendingBlocksRef.current = null;
         }
-        streamingRef.current = { blocks: [], toolInputs: new Map(), finalizedBlocks: [] };
+        streamingRef.current = { blocks: [], toolInputs: new Map() };
         setMessages((prev) => {
           const updated = [...prev];
           const lastIdx = updated.length - 1;
-          if (lastIdx >= 0) {
-            updated[lastIdx] = {
-              ...updated[lastIdx],
-              isStreaming: false,
-            };
+          if (lastIdx >= 0 && updated[lastIdx].isStreaming) {
+            if (updated[lastIdx].blocks.length === 0) {
+              // 移除空的 streaming 占位符
+              updated.pop();
+            } else {
+              updated[lastIdx] = {
+                ...updated[lastIdx],
+                isStreaming: false,
+              };
+            }
           }
           return updated;
         });
@@ -245,7 +245,7 @@ export function useMessages() {
           rafIdRef.current = 0;
           pendingBlocksRef.current = null;
         }
-        streamingRef.current = { blocks: [], toolInputs: new Map(), finalizedBlocks: [] };
+        streamingRef.current = { blocks: [], toolInputs: new Map() };
         // 清理旧的 streaming 占位符 + 添加 error 消息
         setMessages((prev) => {
           const updated = [...prev];
@@ -297,16 +297,27 @@ export function useMessages() {
         if (!pending) return;
         pendingBlocksRef.current = null;
 
-        const finalized = streamingRef.current.finalizedBlocks;
         setMessages((prev) => {
           const lastIdx = prev.length - 1;
-          if (lastIdx < 0 || prev[lastIdx].role !== "assistant") return prev;
-
+          const lastMsg = lastIdx >= 0 ? prev[lastIdx] : null;
           const updated = [...prev];
-          updated[lastIdx] = {
-            ...prev[lastIdx],
-            blocks: [...finalized, ...pending.filter(Boolean)],
-          };
+
+          if (lastMsg?.role === "assistant" && lastMsg.isStreaming) {
+            // 更新已有的 streaming 消息
+            updated[lastIdx] = {
+              ...prev[lastIdx],
+              blocks: [...pending.filter(Boolean)],
+            };
+          } else {
+            // 上一轮已 finalized，自动创建新的 streaming 占位
+            updated.push({
+              id: crypto.randomUUID(),
+              role: "assistant",
+              blocks: [...pending.filter(Boolean)],
+              timestamp: Date.now(),
+              isStreaming: true,
+            });
+          }
           return updated;
         });
       });
