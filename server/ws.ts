@@ -177,7 +177,7 @@ function forwardSDKMessage(ws: ServerWebSocket<WSState>, msg: SDKMessage) {
 
 async function sendCapabilities(ws: ServerWebSocket<WSState>, sessionId: string) {
   try {
-    const caps = await sessionManager.getMergedCapabilities(sessionId);
+    const caps = await sessionManager.getCapabilities(sessionId);
     if (!caps) return;
 
     send(ws, {

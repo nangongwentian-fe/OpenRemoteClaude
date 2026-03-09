@@ -2,19 +2,19 @@ import { query, type Query } from "@anthropic-ai/claude-agent-sdk";
 import { existsSync } from "node:fs";
 import { readdir, readFile } from "node:fs/promises";
 import { homedir } from "node:os";
-import { dirname, extname, join, relative, resolve } from "node:path";
+import { extname, join, relative, resolve } from "node:path";
 import { spawn } from "node:child_process";
 
 const SESSION_CLEANUP_DELAY_MS = 60_000; // 完成后 60 秒清除
 const SESSION_CLEANUP_INTERVAL_MS = 300_000; // 每 5 分钟扫描一次（兜底）
+const SDK_SETTING_SOURCES = ["user", "project", "local"] as const;
 
-export interface SlashCommandDefinition {
+interface SlashCommandDefinition {
   name: string;
   description?: string;
   argumentHint?: string;
   filePath?: string;
   body?: string;
-  userInvocable?: boolean;
 }
 
 type LocalSlashCommand = SlashCommandDefinition & {
@@ -52,26 +52,6 @@ function parseFrontmatter(content: string) {
   };
 }
 
-async function readOpenAiInterfaceMetadata(skillDir: string) {
-  const openAiYamlPath = join(skillDir, "agents", "openai.yaml");
-  if (!existsSync(openAiYamlPath)) {
-    return {};
-  }
-
-  try {
-    const content = await readFile(openAiYamlPath, "utf8");
-    const displayNameMatch = content.match(/^\s*display_name:\s*["']?(.+?)["']?\s*$/m);
-    const shortDescriptionMatch = content.match(/^\s*short_description:\s*["']?(.+?)["']?\s*$/m);
-
-    return {
-      displayName: displayNameMatch?.[1]?.trim(),
-      shortDescription: shortDescriptionMatch?.[1]?.trim(),
-    };
-  } catch {
-    return {};
-  }
-}
-
 function buildCommandName(relativePath: string) {
   return relativePath
     .replace(/\\/g, "/")
@@ -105,121 +85,48 @@ async function collectFiles(dir: string, matcher: (filePath: string) => boolean)
 async function loadMarkdownCommand(filePath: string, relativePath: string) {
   const content = await readFile(filePath, "utf8");
   const { body, metadata } = parseFrontmatter(content);
-  const interfaceMetadata = await readOpenAiInterfaceMetadata(dirname(filePath));
   const name = metadata.name?.trim() || buildCommandName(relativePath);
   if (!name) return null;
-  const userInvocable = metadata["user-invocable"]?.trim().toLowerCase() !== "false";
 
   return {
     name,
-    description: metadata.description?.trim() || interfaceMetadata.shortDescription,
+    description: metadata.description?.trim(),
     argumentHint: metadata["argument-hint"]?.trim(),
     filePath,
     body,
-    userInvocable,
   } satisfies LocalSlashCommand;
 }
 
-function findNearestNamedDir(startCwd: string, dirName: string) {
-  let current = resolve(startCwd);
+async function discoverFallbackSlashCommands(cwd: string) {
+  const normalizedCwd = resolve(cwd);
+  const candidateDirs = [
+    join(normalizedCwd, ".claude"),
+    join(homedir(), ".claude"),
+  ].filter((dir, index, dirs) => existsSync(dir) && dirs.indexOf(dir) === index);
 
-  while (true) {
-    const candidate = join(current, dirName);
-    if (existsSync(candidate)) {
-      return candidate;
-    }
-
-    const parent = dirname(current);
-    if (parent === current) {
-      return null;
-    }
-    current = parent;
-  }
-}
-
-interface SlashCommandSource {
-  kind: "commands" | "skills";
-  root: string;
-}
-
-async function scanSlashCommandSource(source: SlashCommandSource) {
-  const files = await collectFiles(
-    source.root,
-    (filePath) =>
-      source.kind === "commands"
-        ? extname(filePath).toLowerCase() === ".md"
-        : filePath.endsWith("/SKILL.md") || filePath.endsWith("\\SKILL.md")
-  );
-
-  const commands = await Promise.all(
-    files.map((filePath) => loadMarkdownCommand(filePath, relative(source.root, filePath)))
-  );
-
-  return commands.filter(
-    (command): command is LocalSlashCommand => Boolean(command) && command.userInvocable !== false
-  );
-}
-
-async function discoverLocalSlashCommands(cwd: string) {
-  const userHome = homedir();
-  const sources: SlashCommandSource[] = [
-    { kind: "commands", root: join(resolve(cwd), ".claude", "commands") },
-    { kind: "skills", root: join(resolve(cwd), ".claude", "skills") },
-    { kind: "skills", root: join(resolve(cwd), ".agents", "skills") },
-    { kind: "skills", root: join(resolve(cwd), ".codex", "skills") },
-  ];
-
-  const nearestClaudeDir = findNearestNamedDir(cwd, ".claude");
-  const nearestAgentsDir = findNearestNamedDir(cwd, ".agents");
-  const nearestCodexDir = findNearestNamedDir(cwd, ".codex");
-
-  if (nearestClaudeDir) {
-    sources.push({ kind: "commands", root: join(nearestClaudeDir, "commands") });
-    sources.push({ kind: "skills", root: join(nearestClaudeDir, "skills") });
-  }
-  if (nearestAgentsDir) {
-    sources.push({ kind: "skills", root: join(nearestAgentsDir, "skills") });
-  }
-  if (nearestCodexDir) {
-    sources.push({ kind: "skills", root: join(nearestCodexDir, "skills") });
-  }
-
-  sources.push(
-    { kind: "commands", root: join(userHome, ".claude", "commands") },
-    { kind: "skills", root: join(userHome, ".claude", "skills") },
-    { kind: "skills", root: join(userHome, ".agents", "skills") },
-    { kind: "skills", root: join(userHome, ".codex", "skills") }
-  );
-
-  const dedupedSources = [...new Map(sources.map((source) => [`${source.kind}:${source.root}`, source])).values()];
-  const discovered = await Promise.all(dedupedSources.map((source) => scanSlashCommandSource(source)));
   const merged = new Map<string, LocalSlashCommand>();
 
-  for (const group of discovered) {
-    for (const command of group) {
-      if (!merged.has(command.name)) {
+  for (const claudeDir of candidateDirs) {
+    const commandsRoot = join(claudeDir, "commands");
+    const skillsRoot = join(claudeDir, "skills");
+    const [commandFiles, skillFiles] = await Promise.all([
+      collectFiles(commandsRoot, (filePath) => extname(filePath).toLowerCase() === ".md"),
+      collectFiles(skillsRoot, (filePath) => filePath.endsWith("/SKILL.md") || filePath.endsWith("\\SKILL.md")),
+    ]);
+
+    const loaded = await Promise.all([
+      ...commandFiles.map((filePath) => loadMarkdownCommand(filePath, relative(commandsRoot, filePath))),
+      ...skillFiles.map((filePath) => loadMarkdownCommand(filePath, relative(skillsRoot, filePath))),
+    ]);
+
+    for (const command of loaded) {
+      if (command && !merged.has(command.name)) {
         merged.set(command.name, command);
       }
     }
   }
 
-  return [...merged.values()].sort((a, b) =>
-    a.name.localeCompare(b.name, "en", { sensitivity: "base" })
-  );
-}
-
-function mergeCommands(primary: SlashCommandDefinition[], secondary: SlashCommandDefinition[]) {
-  const merged = new Map<string, SlashCommandDefinition>();
-
-  for (const command of [...primary, ...secondary]) {
-    if (!merged.has(command.name)) {
-      merged.set(command.name, command);
-    }
-  }
-
-  return [...merged.values()].sort((a, b) =>
-    a.name.localeCompare(b.name, "en", { sensitivity: "base" })
-  );
+  return [...merged.values()];
 }
 
 function parseSlashInvocation(prompt: string) {
@@ -236,6 +143,21 @@ function parseSlashInvocation(prompt: string) {
     name: withoutSlash.slice(0, firstWhitespace),
     args: withoutSlash.slice(firstWhitespace).trim(),
   };
+}
+
+function extractCommandNames(commands: unknown[]) {
+  return new Set(
+    commands
+      .map((command) => {
+        if (typeof command === "string") return command;
+        if (command && typeof command === "object") {
+          const record = command as Record<string, unknown>;
+          return String(record.name ?? record.command ?? "");
+        }
+        return "";
+      })
+      .filter(Boolean)
+  );
 }
 
 function applyCommandArguments(body: string, args: string) {
@@ -454,6 +376,7 @@ export class ClaudeSessionManager {
         ...(options?.model ? { model: options.model } : {}),
         ...(options?.effort ? { effort: options.effort } : {}),
         ...(options?.thinking ? { thinking: options.thinking } : {}),
+        settingSources: [...SDK_SETTING_SOURCES],
         allowedTools: [
           "Read",
           "Edit",
@@ -525,35 +448,6 @@ export class ClaudeSessionManager {
         session.queryHandle.mcpServerStatus(),
       ]);
       return { models, commands, mcpServers: mcpStatus };
-    } catch {
-      return null;
-    }
-  }
-
-  async getMergedCapabilities(sessionId: string) {
-    const session = this.sessions.get(sessionId);
-    if (!session?.queryHandle) return null;
-
-    try {
-      const [models, sdkCommands, mcpStatus, localCommands] = await Promise.all([
-        session.queryHandle.supportedModels(),
-        session.queryHandle.supportedCommands(),
-        session.queryHandle.mcpServerStatus(),
-        discoverLocalSlashCommands(session.cwd),
-      ]);
-
-      return {
-        models,
-        commands: mergeCommands(
-          localCommands,
-          (sdkCommands as Array<Record<string, unknown>>).map((command) => ({
-            name: String(command.name ?? command.command ?? ""),
-            description: typeof command.description === "string" ? command.description : undefined,
-            argumentHint: typeof command.argumentHint === "string" ? command.argumentHint : undefined,
-          }))
-        ),
-        mcpServers: mcpStatus,
-      };
     } catch {
       return null;
     }
@@ -644,21 +538,14 @@ export class ClaudeSessionManager {
           maxTurns: 1,
           permissionMode: "plan",
           allowedTools: [],
+          settingSources: [...SDK_SETTING_SOURCES],
         },
       });
 
       const initResult = await q.initializationResult();
-      const localCommands = await discoverLocalSlashCommands(cwd);
       return {
         models: initResult.models,
-        commands: mergeCommands(
-          localCommands,
-          (initResult.commands as Array<Record<string, unknown>>).map((command) => ({
-            name: String(command.name ?? command.command ?? ""),
-            description: typeof command.description === "string" ? command.description : undefined,
-            argumentHint: typeof command.argumentHint === "string" ? command.argumentHint : undefined,
-          }))
-        ),
+        commands: initResult.commands,
         mcpServers: [],
       };
     } catch {
@@ -673,7 +560,15 @@ export class ClaudeSessionManager {
     const invocation = parseSlashInvocation(prompt);
     if (!invocation) return prompt;
 
-    const localCommands = await discoverLocalSlashCommands(cwd);
+    const caps = await this.probeCapabilities(cwd);
+    if (!caps) return prompt;
+
+    const knownCommands = extractCommandNames(caps.commands);
+    if (knownCommands.has(invocation.name)) {
+      return prompt;
+    }
+
+    const localCommands = await discoverFallbackSlashCommands(cwd);
     const command = localCommands.find((item) => item.name === invocation.name);
     if (!command) return prompt;
 

@@ -66,8 +66,6 @@ export function useWebSocket(
         if (msg.type === "auth_result") {
           if (msg.payload.success) {
             setStatus("authenticated");
-            // 认证成功后请求 capabilities（重连时也能获取 models）
-            ws.send(JSON.stringify({ type: "request_capabilities" }));
           } else {
             // 认证失败：阻止重连并通知上层清除无效 token
             reconnectAttempts.current = MAX_RECONNECT_ATTEMPTS;
