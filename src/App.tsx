@@ -9,6 +9,8 @@ import { useCapabilities } from "./hooks/useCapabilities";
 import { useAttachments } from "./hooks/useAttachments";
 import { useProjects } from "./hooks/useProjects";
 import { useFileReferences } from "./hooks/useFileReferences";
+import { useTerminal } from "./hooks/useTerminal";
+import { usePreviewPorts } from "./hooks/usePreviewPorts";
 import { Login } from "./pages/Login";
 import { Chat } from "./pages/Chat";
 import { ProjectManager } from "./components/ProjectManager";
@@ -54,6 +56,29 @@ export default function App() {
   const wrappedHandler = useCallback(
     (msg: ServerMessage) => {
       handleServerMessage(msg);
+      // Terminal 消息转发
+      if (msg.type === "terminal_created" || msg.type === "terminal_output" || msg.type === "terminal_exited" || msg.type === "terminal_list") {
+        terminalRef.current.handleServerMessage(msg as { type: string; payload?: Record<string, unknown> });
+      }
+      if (msg.type === "terminal_exited") {
+        const terminalId = (msg.payload as { id: string }).id;
+        previewPortsRef.current.removePortsForTerminal(terminalId);
+      }
+      if (msg.type === "terminal_list") {
+        const terminals = (msg.payload as { terminals?: Array<{ id: string }> }).terminals ?? [];
+        const activeIds = new Set(terminals.map((t) => t.id));
+        const staleTerminalIds = new Set(
+          previewPortsRef.current.detectedPorts
+            .map((p) => p.terminalId)
+            .filter((id) => !activeIds.has(id))
+        );
+        for (const terminalId of staleTerminalIds) {
+          previewPortsRef.current.removePortsForTerminal(terminalId);
+        }
+      }
+      if (msg.type === "port_detected") {
+        previewPortsRef.current.handlePortDetected(msg as { payload: { terminalId: string; port: number; url: string } });
+      }
       if (msg.type === "chat_complete" || msg.type === "result") {
         fetchThreadsRef.current();
       }
@@ -65,16 +90,23 @@ export default function App() {
       }
       if (msg.type === "capabilities") {
         capabilities.handleCapabilities(msg.payload);
-        // 用户从未手动选过模型时，自动选择最新的 Sonnet 模型
-        const userHasChosen = localStorage.getItem(MODEL_CHOSEN_KEY) === "true";
-        if (!userHasChosen && msg.payload.models?.length > 0) {
-          const latestSonnet = (msg.payload.models as ModelInfo[]).find((m) =>
-            m.displayName?.toLowerCase().includes("sonnet")
-          );
-          const autoModel = latestSonnet || msg.payload.models[0];
-          if (autoModel) {
-            capabilities.setCurrentModel(autoModel.value);
-            updatePreferenceRef.current("model", autoModel.value);
+        const models = (msg.payload.models as ModelInfo[]) || [];
+        if (models.length > 0) {
+          const userHasChosen = localStorage.getItem(MODEL_CHOSEN_KEY) === "true";
+          const available = new Set(models.map((m) => m.value));
+          const preferredModel = preferences.model;
+          const preferredIsValid = preferredModel ? available.has(preferredModel) : false;
+          const shouldAutoSelect = !preferredIsValid || (!userHasChosen && !preferredModel);
+
+          if (shouldAutoSelect) {
+            const latestSonnet = models.find((m) =>
+              m.displayName?.toLowerCase().includes("sonnet")
+            );
+            const autoModel = latestSonnet || models[0];
+            if (autoModel) {
+              capabilities.setCurrentModel(autoModel.value);
+              updatePreferenceRef.current("model", autoModel.value);
+            }
           }
         }
       }
@@ -87,10 +119,19 @@ export default function App() {
         updatePreferenceRef.current("permissionMode", msg.payload.mode);
       }
     },
-    [handleServerMessage, capabilities]
+    [handleServerMessage, capabilities, preferences.model]
   );
 
   const ws = useWebSocket(auth.token, wrappedHandler, auth.logout);
+  const terminal = useTerminal(ws.sendRaw);
+  const previewPorts = usePreviewPorts();
+
+  // Refs for terminal/preview to avoid stale closures in wrappedHandler
+  const terminalRef = useRef(terminal);
+  terminalRef.current = terminal;
+  const previewPortsRef = useRef(previewPorts);
+  previewPortsRef.current = previewPorts;
+
   const capabilitiesCwd = projectsHook.activeProject?.path
     || threads.find((t) => t.id === activeThreadId)?.cwd
     || undefined;
@@ -105,8 +146,9 @@ export default function App() {
   useEffect(() => {
     if (ws.status === "authenticated") {
       ws.requestCapabilities(capabilitiesCwd);
+      terminal.requestTerminalList();
     }
-  }, [ws.status, ws.requestCapabilities, capabilitiesCwd]);
+  }, [ws.status, ws.requestCapabilities, capabilitiesCwd, terminal.requestTerminalList]);
 
   useEffect(() => {
     if (ws.status === "authenticated" && isProcessing && currentSessionId) {
@@ -181,9 +223,14 @@ export default function App() {
     }
 
     const cwd = capabilitiesCwd;
+    const availableModels = new Set(capabilities.models.map((m) => m.value));
+    const sanitizedPreferences =
+      preferences.model && availableModels.has(preferences.model)
+        ? preferences
+        : { ...preferences, model: undefined };
 
     addUserMessage(prompt, attachmentInfos);
-    ws.sendChat(finalPrompt, cwd, activeThreadId || undefined, preferences);
+    ws.sendChat(finalPrompt, cwd, activeThreadId || undefined, sanitizedPreferences);
   };
 
   const handleSwitchThread = async (threadId: string) => {
@@ -246,6 +293,10 @@ export default function App() {
       references={fileReferences.references}
       onAddReference={fileReferences.addReference}
       onRemoveReference={fileReferences.removeReference}
+      // Terminal
+      terminal={terminal}
+      // Preview
+      previewPorts={previewPorts}
     />
     <ProjectManager
       open={projectManagerOpen}

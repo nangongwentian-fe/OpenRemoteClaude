@@ -1,5 +1,6 @@
 import { verify } from "hono/jwt";
 import { ClaudeSessionManager, type SessionOptions } from "./claude";
+import { TerminalManager } from "./terminal";
 import { DataStore } from "./db";
 import type { ServerWebSocket } from "bun";
 
@@ -18,8 +19,9 @@ interface WSState {
 }
 
 const sessionManager = new ClaudeSessionManager();
+const terminalManager = new TerminalManager();
 
-export { sessionManager };
+export { sessionManager, terminalManager };
 
 function send(ws: ServerWebSocket<WSState> | null | undefined, data: unknown) {
   if (ws?.readyState === 1) {
@@ -294,6 +296,7 @@ async function sendCapabilities(ws: ServerWebSocket<WSState> | null, sessionId: 
 export function createWSHandlers(jwtSecret: string, db: DataStore) {
   const disconnectTimers = new Map<string, ReturnType<typeof setTimeout>>();
   const sessionBindings = new Map<string, SessionBinding>();
+  const terminalSocketBindings = new Map<string, ServerWebSocket<WSState> | null>();
 
   function clearDisconnectTimer(sessionId: string) {
     const timer = disconnectTimers.get(sessionId);
@@ -371,6 +374,23 @@ export function createWSHandlers(jwtSecret: string, db: DataStore) {
     replayPendingPermissions(ws, sessionId);
     void sendCapabilities(ws, sessionId);
     return true;
+  }
+
+  function bindTerminalSocket(terminalId: string, ws: ServerWebSocket<WSState>) {
+    terminalSocketBindings.set(terminalId, ws);
+  }
+
+  function unbindTerminalSocketsFor(ws: ServerWebSocket<WSState>) {
+    for (const [terminalId, boundWs] of terminalSocketBindings) {
+      if (boundWs === ws) {
+        terminalSocketBindings.set(terminalId, null);
+      }
+    }
+  }
+
+  function sendTerminalEvent(terminalId: string, data: unknown) {
+    const targetWs = terminalSocketBindings.get(terminalId);
+    send(targetWs, data);
   }
 
   return {
@@ -677,6 +697,76 @@ export function createWSHandlers(jwtSecret: string, db: DataStore) {
           send(ws, { type: "pong" });
           break;
         }
+
+        // Terminal 消息处理
+        case "terminal_create": {
+          if (!ws.data.authenticated) return;
+          const tPayload = data.payload as { id?: string; cwd?: string; shell?: string; cols?: number; rows?: number } | undefined;
+          const termId = tPayload?.id || crypto.randomUUID();
+          bindTerminalSocket(termId, ws);
+          try {
+            const info = terminalManager.create(termId, {
+              cwd: tPayload?.cwd,
+              shell: tPayload?.shell,
+              cols: tPayload?.cols,
+              rows: tPayload?.rows,
+              onData: (output) => {
+                sendTerminalEvent(termId, { type: "terminal_output", payload: { id: termId, data: output } });
+              },
+              onExit: (exitCode) => {
+                sendTerminalEvent(termId, { type: "terminal_exited", payload: { id: termId, exitCode } });
+                terminalSocketBindings.delete(termId);
+              },
+              onPortDetected: (port, url) => {
+                sendTerminalEvent(termId, { type: "port_detected", payload: { terminalId: termId, port, url } });
+              },
+            });
+            send(ws, { type: "terminal_created", payload: { id: info.id, shell: info.shell, cwd: info.cwd } });
+          } catch (err) {
+            terminalSocketBindings.delete(termId);
+            send(ws, { type: "error", payload: { message: err instanceof Error ? err.message : "Failed to create terminal" } });
+          }
+          break;
+        }
+
+        case "terminal_input": {
+          if (!ws.data.authenticated) return;
+          const inputPayload = data.payload as { id: string; data: string };
+          try {
+            terminalManager.write(inputPayload.id, inputPayload.data);
+          } catch (err) {
+            send(ws, { type: "error", payload: { message: err instanceof Error ? err.message : "Terminal write failed" } });
+          }
+          break;
+        }
+
+        case "terminal_resize": {
+          if (!ws.data.authenticated) return;
+          const resizePayload = data.payload as { id: string; cols: number; rows: number };
+          try {
+            terminalManager.resize(resizePayload.id, resizePayload.cols, resizePayload.rows);
+          } catch (err) {
+            send(ws, { type: "error", payload: { message: err instanceof Error ? err.message : "Terminal resize failed" } });
+          }
+          break;
+        }
+
+        case "terminal_destroy": {
+          if (!ws.data.authenticated) return;
+          const destroyPayload = data.payload as { id: string };
+          terminalManager.destroy(destroyPayload.id);
+          break;
+        }
+
+        case "terminal_list": {
+          if (!ws.data.authenticated) return;
+          const terminals = terminalManager.list();
+          for (const terminal of terminals) {
+            bindTerminalSocket(terminal.id, ws);
+          }
+          send(ws, { type: "terminal_list", payload: { terminals } });
+          break;
+        }
       }
     },
 
@@ -687,6 +777,7 @@ export function createWSHandlers(jwtSecret: string, db: DataStore) {
       if (activeSessionId) {
         detachSessionFromSocket(ws, activeSessionId);
       }
+      unbindTerminalSocketsFor(ws);
     },
   };
 }

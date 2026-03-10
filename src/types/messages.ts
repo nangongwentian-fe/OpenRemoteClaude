@@ -73,7 +73,13 @@ export type ClientMessage =
   | { type: "set_model"; payload: { model: string } }
   | { type: "set_permission_mode"; payload: { mode: PermissionMode } }
   | { type: "request_capabilities"; payload?: { cwd?: string; sessionId?: string } }
-  | { type: "permission_response"; payload: { requestId: string; behavior: "allow" | "deny"; sessionId?: string } };
+  | { type: "permission_response"; payload: { requestId: string; behavior: "allow" | "deny"; sessionId?: string } }
+  // Terminal
+  | { type: "terminal_create"; payload: { id?: string; cwd?: string; shell?: string; cols?: number; rows?: number } }
+  | { type: "terminal_input"; payload: { id: string; data: string } }
+  | { type: "terminal_resize"; payload: { id: string; cols: number; rows: number } }
+  | { type: "terminal_destroy"; payload: { id: string } }
+  | { type: "terminal_list" };
 
 // 服务端 → 客户端
 export type ServerMessage =
@@ -145,7 +151,22 @@ export type ServerMessage =
         decisionReason?: string;
         description?: string;
       };
-    };
+    }
+  // Terminal
+  | { type: "terminal_created"; payload: { id: string; shell: string; cwd: string } }
+  | { type: "terminal_output"; payload: { id: string; data: string } }
+  | { type: "terminal_exited"; payload: { id: string; exitCode: number } }
+  | { type: "terminal_list"; payload: { terminals: TerminalListItem[] } }
+  | { type: "port_detected"; payload: { terminalId: string; port: number; url: string } };
+
+export interface TerminalListItem {
+  id: string;
+  shell: string;
+  cwd: string;
+  cols: number;
+  rows: number;
+  createdAt: number;
+}
 
 // 内容块类型
 export type ContentBlock =

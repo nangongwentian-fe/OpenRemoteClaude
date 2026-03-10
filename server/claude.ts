@@ -9,6 +9,7 @@ const SESSION_CLEANUP_DELAY_MS = 60_000; // 完成后 60 秒清除
 const SESSION_CLEANUP_INTERVAL_MS = 60_000; // 每 60 秒扫描一次
 const PROBE_CACHE_TTL_MS = 300_000; // probe 缓存 5 分钟
 const SLASH_COMMAND_CACHE_TTL_MS = 30_000; // slash command 缓存 30 秒
+const STDERR_BUFFER_LIMIT = 40;
 const SDK_SETTING_SOURCES = ["user", "project", "local"] as const;
 
 interface SlashCommandDefinition {
@@ -23,6 +24,40 @@ type LocalSlashCommand = SlashCommandDefinition & {
   body: string;
   filePath: string;
 };
+
+function stripAnsi(text: string) {
+  return text.replace(/\x1B\[[0-9;]*m/g, "");
+}
+
+function summarizeStderr(stderrLines: string[]) {
+  const cleaned = stderrLines
+    .map((line) => stripAnsi(line).trim())
+    .filter(Boolean)
+    .filter((line) => !line.startsWith("DEBUG "));
+
+  if (cleaned.length === 0) return null;
+
+  // 优先取最后一条 error/fatal/unknown option，其次取最后一条非空日志
+  const preferred = [...cleaned]
+    .reverse()
+    .find((line) => /error|fatal|unknown option|invalid/i.test(line));
+
+  return preferred || cleaned[cleaned.length - 1];
+}
+
+function enrichProcessExitError(err: unknown, stderrLines: string[]) {
+  const base = err instanceof Error ? err : new Error(String(err));
+  if (!/Claude Code process exited with code \d+/i.test(base.message)) {
+    return base;
+  }
+
+  const stderrSummary = summarizeStderr(stderrLines);
+  if (!stderrSummary) {
+    return new Error(`${base.message}。请执行 \`claude doctor\` 检查 Claude Code 安装、登录和配置。`);
+  }
+
+  return new Error(`${base.message}: ${stderrSummary}`);
+}
 
 function stripQuotes(value: string) {
   return value.replace(/^["']|["']$/g, "");
@@ -372,6 +407,7 @@ export class ClaudeSessionManager {
       pendingPermissions: new Map(),
     };
     this.sessions.set(sessionId, session);
+    const stderrLines: string[] = [];
 
     const q = query({
       prompt,
@@ -401,6 +437,13 @@ export class ClaudeSessionManager {
         permissionMode: options?.permissionMode ?? "acceptEdits",
         maxTurns: 50,
         includePartialMessages: true,
+        stderr: (data) => {
+          const line = data.trim();
+          if (!line) return;
+          stderrLines.push(line);
+          if (stderrLines.length > STDERR_BUFFER_LIMIT) stderrLines.shift();
+          console.warn(`[Claude stderr][${sessionId}] ${line}`);
+        },
         canUseTool: async (toolName, input, opts) => {
           return new Promise((resolve) => {
             const requestId = opts.toolUseID;
@@ -435,7 +478,7 @@ export class ClaudeSessionManager {
         }
         onComplete();
       } catch (err) {
-        onError(err instanceof Error ? err : new Error(String(err)));
+        onError(enrichProcessExitError(err, stderrLines));
       } finally {
         this.markCompleted(sessionId, session);
       }
@@ -550,6 +593,7 @@ export class ClaudeSessionManager {
 
     const abortController = new AbortController();
     let q: Query | null = null;
+    const probeStderr: string[] = [];
     try {
       q = query({
         prompt: "hi",
@@ -560,6 +604,12 @@ export class ClaudeSessionManager {
           permissionMode: "plan",
           allowedTools: [],
           settingSources: [...SDK_SETTING_SOURCES],
+          stderr: (data) => {
+            const line = data.trim();
+            if (!line) return;
+            probeStderr.push(line);
+            if (probeStderr.length > STDERR_BUFFER_LIMIT) probeStderr.shift();
+          },
         },
       });
 
@@ -571,7 +621,9 @@ export class ClaudeSessionManager {
       };
       this.probeCache.set(cacheKey, { data, timestamp: Date.now() });
       return data;
-    } catch {
+    } catch (error) {
+      const enriched = enrichProcessExitError(error, probeStderr);
+      console.warn(`[Claude probe] ${enriched.message}`);
       return null;
     } finally {
       abortController.abort();

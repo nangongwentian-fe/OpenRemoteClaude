@@ -1,6 +1,10 @@
 import { Hono } from "hono";
-import { sign } from "hono/jwt";
+import { sign, verify } from "hono/jwt";
 import type { DataStore } from "./db";
+import {
+  clearPreviewSessionCookie,
+  setPreviewSessionCookie,
+} from "./auth-cookie";
 
 const JWT_EXPIRY_HOURS = 72;
 
@@ -52,7 +56,36 @@ export function createAuthRoutes(db: DataStore, jwtSecret: string) {
       "HS256"
     );
 
+    setPreviewSessionCookie(c, token);
+
     return c.json({ token });
+  });
+
+  // 使用 Bearer token 同步预览鉴权 cookie（用于无感迁移）
+  auth.post("/session", async (c) => {
+    const authHeader = c.req.header("authorization");
+    if (!authHeader?.startsWith("Bearer ")) {
+      return c.json({ error: "Unauthorized" }, 401);
+    }
+
+    const token = authHeader.slice(7).trim();
+    if (!token) {
+      return c.json({ error: "Unauthorized" }, 401);
+    }
+
+    try {
+      await verify(token, jwtSecret, "HS256");
+      setPreviewSessionCookie(c, token);
+      return c.json({ success: true });
+    } catch {
+      return c.json({ error: "Unauthorized" }, 401);
+    }
+  });
+
+  // 退出登录并清理预览鉴权 cookie
+  auth.post("/logout", (c) => {
+    clearPreviewSessionCookie(c);
+    return c.json({ success: true });
   });
 
   return auth;

@@ -22,6 +22,20 @@ export function useAuth() {
     return () => controller.abort();
   }, []);
 
+  // 为 iframe/new tab 预览同步 HttpOnly cookie
+  useEffect(() => {
+    if (!token) return;
+    const controller = new AbortController();
+
+    fetch("/api/auth/session", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token}` },
+      signal: controller.signal,
+    }).catch(() => {});
+
+    return () => controller.abort();
+  }, [token]);
+
   const setup = useCallback(async (password: string) => {
     setLoading(true);
     setError(null);
@@ -72,6 +86,7 @@ export function useAuth() {
   }, []);
 
   const logout = useCallback(() => {
+    void fetch("/api/auth/logout", { method: "POST" }).catch(() => {});
     localStorage.removeItem(TOKEN_KEY);
     setToken(null);
   }, []);

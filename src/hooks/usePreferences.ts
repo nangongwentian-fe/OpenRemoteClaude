@@ -4,7 +4,6 @@ import type { SessionPreferences } from "../types/messages";
 const STORAGE_KEY = "rcc_preferences";
 
 const defaults: SessionPreferences = {
-  model: "claude-sonnet-4-20250514",
   effort: "high",
   thinking: "adaptive",
   permissionMode: "acceptEdits",

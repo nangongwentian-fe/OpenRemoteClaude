@@ -5,12 +5,13 @@ import { serveStatic } from "hono/bun";
 import { createBunWebSocket } from "hono/bun";
 import { DataStore } from "./db";
 import { createAuthRoutes } from "./auth";
-import { createWSHandlers, sessionManager, type WSState } from "./ws";
+import { createWSHandlers, sessionManager, terminalManager, type WSState } from "./ws";
 import { createThreadRoutes } from "./threads";
 import { createUploadRoutes } from "./upload";
 import { createProjectRoutes } from "./projects";
 import { launchTunnel, getTunnelInfo, stopTunnel } from "./tunnel";
 import { detectTailscale, getTailscaleInfo } from "./tailscale";
+import { createPreviewRoutes } from "./preview";
 
 import { existsSync } from "node:fs";
 
@@ -56,6 +57,9 @@ app.route("/api/projects", createProjectRoutes(db, JWT_SECRET));
 
 // 文件上传路由（需要 JWT）
 app.route("/api", createUploadRoutes(JWT_SECRET));
+
+// Web Preview 代理路由（需要 JWT）
+app.route("/api/preview", createPreviewRoutes(JWT_SECRET));
 
 // WebSocket 路由
 const wsHandlers = createWSHandlers(JWT_SECRET, db);
@@ -157,6 +161,7 @@ Promise.allSettled(networkTasks).then(() => {
 // 优雅关闭
 process.on("SIGINT", () => {
   console.log("\n[Server] Shutting down...");
+  terminalManager.destroyAll();
   sessionManager.dispose();
   stopTunnel();
   db.close();
@@ -164,6 +169,7 @@ process.on("SIGINT", () => {
 });
 
 process.on("SIGTERM", () => {
+  terminalManager.destroyAll();
   sessionManager.dispose();
   stopTunnel();
   db.close();
