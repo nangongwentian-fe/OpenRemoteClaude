@@ -239,6 +239,8 @@ export function useMessages() {
       }
 
       case "error": {
+        const errorMessage = msg.payload.message;
+        const isTransientSessionError = errorMessage === "Session is no longer active";
         setIsProcessing(false);
         // 取消待执行的 RAF
         if (rafIdRef.current) {
@@ -247,7 +249,11 @@ export function useMessages() {
           pendingBlocksRef.current = null;
         }
         streamingRef.current = { blocks: [], toolInputs: new Map() };
-        // 清理旧的 streaming 占位符 + 添加 error 消息
+        if (isTransientSessionError) {
+          // 重连竞态下的 reattach 失效，不渲染错误气泡，避免污染对话
+          setCurrentSessionId(null);
+        }
+        // 清理旧的 streaming 占位符 +（必要时）添加 error 消息
         setMessages((prev) => {
           const updated = [...prev];
           const lastIdx = updated.length - 1;
@@ -258,12 +264,14 @@ export function useMessages() {
               updated[lastIdx] = { ...updated[lastIdx], isStreaming: false };
             }
           }
-          updated.push({
-            id: createId(),
-            role: "assistant",
-            blocks: [{ type: "text", text: `Error: ${msg.payload.message}` }],
-            timestamp: Date.now(),
-          });
+          if (!isTransientSessionError) {
+            updated.push({
+              id: createId(),
+              role: "assistant",
+              blocks: [{ type: "text", text: `Error: ${errorMessage}` }],
+              timestamp: Date.now(),
+            });
+          }
           return updated;
         });
         break;

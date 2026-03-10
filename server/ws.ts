@@ -99,7 +99,7 @@ function mapCommands(commands: Array<Record<string, unknown>>) {
     .filter((command) => command.name);
 }
 
-function forwardSDKMessage(binding: SessionBinding, msg: SDKMessage) {
+function forwardSDKMessage(binding: SessionBinding, msg: SDKMessage, managedSessionId: string) {
   switch (msg.type) {
     case "stream_event": {
       const event = msg.event as Record<string, unknown>;
@@ -211,7 +211,7 @@ function forwardSDKMessage(binding: SessionBinding, msg: SDKMessage) {
       sendOrQueue(binding, {
         type: "result",
         payload: {
-          sessionId: msg.session_id,
+          sessionId: managedSessionId || (msg.session_id as string),
           durationMs: msg.duration_ms,
           isError: msg.is_error,
           numTurns: msg.num_turns,
@@ -239,7 +239,7 @@ function forwardSDKMessage(binding: SessionBinding, msg: SDKMessage) {
         sendOrQueue(binding, {
           type: "system_init",
           payload: {
-            sessionId: msg.session_id,
+            sessionId: managedSessionId || (msg.session_id as string),
             tools: msg.tools,
             model: msg.model,
             permissionMode: msg.permissionMode,
@@ -250,7 +250,7 @@ function forwardSDKMessage(binding: SessionBinding, msg: SDKMessage) {
         });
 
         // 异步获取详细能力信息
-        const sessionId = msg.session_id as string;
+        const sessionId = managedSessionId || (msg.session_id as string);
         if (sessionId) {
           sendCapabilities(binding.ws, sessionId);
         }
@@ -485,7 +485,7 @@ export function createWSHandlers(jwtSecret: string, db: DataStore) {
             sessionId = await sessionManager.startSession(
               resolvedPrompt,
               cwd,
-              (msg) => forwardSDKMessage(binding, msg as SDKMessage),
+              (msg) => forwardSDKMessage(binding, msg as SDKMessage, sessionId),
               () => {
                 if (binding.ws?.data.activeSessionId === sessionId) {
                   binding.ws.data.activeSessionId = null;
