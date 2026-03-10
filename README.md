@@ -22,6 +22,7 @@ Self-hosted tool to remotely control your local [Claude Code](https://docs.anthr
 - **Project Switching** — Switch between different local project directories
 - **Model Selection** — Choose from available Claude models
 - **MCP Integration** — Works with configured MCP servers
+- **Built-in Terminal** — Interactive terminal panel supports Windows (Bun pipe mode) and POSIX PTY
 
 ## Tech Stack
 
@@ -70,6 +71,12 @@ bun run dev:server   # server only
 bun run dev:client   # Vite dev server only
 bun run build        # build frontend
 ```
+
+### Windows Terminal Troubleshooting
+
+- On Windows, terminal sessions run in shell pipe mode (`stdin/stdout`) because Bun PTY is POSIX-only.
+- If Create Terminal fails, verify your configured shell exists and is executable, then restart the server.
+- Default Windows shell probe order is `pwsh.exe` -> `powershell.exe` -> `cmd.exe`.
 
 ## Environment Variables
 

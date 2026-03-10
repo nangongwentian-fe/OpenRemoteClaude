@@ -79,7 +79,7 @@ export function TerminalPanel({
       <div className="flex items-center gap-0.5 px-2 py-1 border-b border-(--color-overlay-border) shrink-0 overflow-x-auto">
         {terminalEntries.map(([id, term]) => {
           const isActive = id === activeTerminalId;
-          const shellName = term.shell.split("/").pop() || "sh";
+          const shellName = term.shell.split(/[\\/]/).pop() || "sh";
           return (
             <button
               key={id}

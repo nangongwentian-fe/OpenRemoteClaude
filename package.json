@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "type": "module",
   "scripts": {
-    "dev": "bun run --watch server/index.ts & bun run vite dev & wait",
+    "dev": "bun run scripts/dev.ts",
     "dev:server": "bun run --watch server/index.ts",
     "dev:client": "bunx vite dev",
     "build": "bunx vite build",

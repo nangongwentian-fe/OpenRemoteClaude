@@ -156,21 +156,6 @@ export default function App() {
     }
   }, [ws.status, ws.reattachSession, isProcessing, currentSessionId]);
 
-  if (!auth.token) {
-    return (
-      <Login
-        initialized={auth.initialized}
-        onSetup={auth.setup}
-        onLogin={auth.login}
-        error={auth.error}
-        loading={auth.loading}
-        theme={theme}
-        resolved={resolved}
-        onSetTheme={setTheme}
-      />
-    );
-  }
-
   const handleSetModel = useCallback(
     (model: string) => {
       capabilities.setCurrentModel(model);
@@ -250,6 +235,21 @@ export default function App() {
     startNewThread();
     clearMessages();
   };
+
+  if (!auth.token) {
+    return (
+      <Login
+        initialized={auth.initialized}
+        onSetup={auth.setup}
+        onLogin={auth.login}
+        error={auth.error}
+        loading={auth.loading}
+        theme={theme}
+        resolved={resolved}
+        onSetTheme={setTheme}
+      />
+    );
+  }
 
   return (
     <>
