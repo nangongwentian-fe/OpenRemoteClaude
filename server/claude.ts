@@ -263,6 +263,7 @@ export interface SessionInfo {
   queryHandle: Query | null;
   completedAt: number | null;
   pendingPermissions: Map<string, {
+    info: PermissionRequestInfo;
     resolve: (result: { behavior: "allow" } | { behavior: "deny"; message: string }) => void;
   }>;
 }
@@ -289,7 +290,7 @@ export interface SessionOptions {
 export class ClaudeSessionManager {
   private sessions = new Map<string, SessionInfo>();
   private cleanupTimer: ReturnType<typeof setInterval>;
-  private probeCache: { data: { models: unknown[]; commands: unknown[]; mcpServers: unknown[] }; timestamp: number } | null = null;
+  private probeCache = new Map<string, { data: { models: unknown[]; commands: unknown[]; mcpServers: unknown[] }; timestamp: number }>();
   private slashCommandCache = new Map<string, { commands: LocalSlashCommand[]; timestamp: number }>();
 
   constructor() {
@@ -312,9 +313,10 @@ export class ClaudeSessionManager {
     }
   }
 
-  private markCompleted(sessionId: string) {
+  private markCompleted(sessionId: string, expectedSession?: SessionInfo) {
     const session = this.sessions.get(sessionId);
     if (!session) return;
+    if (expectedSession && session !== expectedSession) return;
     this.denyAllPendingPermissions(sessionId);
     session.isActive = false;
     session.queryHandle = null;
@@ -338,7 +340,7 @@ export class ClaudeSessionManager {
     const session = this.sessions.get(sessionId);
     if (session?.isActive) {
       session.abortController.abort();
-      this.markCompleted(sessionId);
+      this.markCompleted(sessionId, session);
       console.log(`[Session] Aborted orphan session ${sessionId}`);
     }
   }
@@ -354,6 +356,10 @@ export class ClaudeSessionManager {
     options?: SessionOptions
   ): Promise<string> {
     const sessionId = resumeSessionId || crypto.randomUUID();
+    const existingSession = this.sessions.get(sessionId);
+    if (existingSession?.isActive) {
+      throw new Error(`Session ${sessionId} is already active`);
+    }
     const abortController = new AbortController();
 
     const session: SessionInfo = {
@@ -398,14 +404,15 @@ export class ClaudeSessionManager {
         canUseTool: async (toolName, input, opts) => {
           return new Promise((resolve) => {
             const requestId = opts.toolUseID;
-            session.pendingPermissions.set(requestId, { resolve });
-
-            onPermissionRequest({
+            const info: PermissionRequestInfo = {
               requestId,
               toolName,
               input,
               decisionReason: opts.decisionReason,
-            });
+            };
+            session.pendingPermissions.set(requestId, { info, resolve });
+
+            onPermissionRequest(info);
 
             opts.signal.addEventListener("abort", () => {
               if (session.pendingPermissions.has(requestId)) {
@@ -430,7 +437,7 @@ export class ClaudeSessionManager {
       } catch (err) {
         onError(err instanceof Error ? err : new Error(String(err)));
       } finally {
-        this.markCompleted(sessionId);
+        this.markCompleted(sessionId, session);
       }
     })();
 
@@ -478,7 +485,7 @@ export class ClaudeSessionManager {
     const session = this.sessions.get(sessionId);
     if (session) {
       session.abortController.abort();
-      this.markCompleted(sessionId);
+      this.markCompleted(sessionId, session);
     }
   }
 
@@ -498,10 +505,16 @@ export class ClaudeSessionManager {
   denyAllPendingPermissions(sessionId: string) {
     const session = this.sessions.get(sessionId);
     if (!session) return;
-    for (const [id, pending] of session.pendingPermissions) {
+    for (const pending of session.pendingPermissions.values()) {
       pending.resolve({ behavior: "deny", message: "Session ended" });
     }
     session.pendingPermissions.clear();
+  }
+
+  getPendingPermissions(sessionId: string): PermissionRequestInfo[] {
+    const session = this.sessions.get(sessionId);
+    if (!session) return [];
+    return [...session.pendingPermissions.values()].map((pending) => pending.info);
   }
 
   getActiveSession(): SessionInfo | undefined {
@@ -527,9 +540,12 @@ export class ClaudeSessionManager {
    * 用于在没有活跃 session 时获取可用模型信息。
    */
   async probeCapabilities(cwd: string): Promise<{ models: unknown[]; commands: unknown[]; mcpServers: unknown[] } | null> {
+    const cacheKey = resolve(cwd);
+
     // 使用缓存避免重复创建探测 session
-    if (this.probeCache && Date.now() - this.probeCache.timestamp < PROBE_CACHE_TTL_MS) {
-      return this.probeCache.data;
+    const cached = this.probeCache.get(cacheKey);
+    if (cached && Date.now() - cached.timestamp < PROBE_CACHE_TTL_MS) {
+      return cached.data;
     }
 
     const abortController = new AbortController();
@@ -553,7 +569,7 @@ export class ClaudeSessionManager {
         commands: initResult.commands,
         mcpServers: [],
       };
-      this.probeCache = { data, timestamp: Date.now() };
+      this.probeCache.set(cacheKey, { data, timestamp: Date.now() });
       return data;
     } catch {
       return null;

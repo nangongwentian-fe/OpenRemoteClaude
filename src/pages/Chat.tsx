@@ -45,7 +45,7 @@ interface Props {
   currentPermissionMode: PermissionMode;
   onSetPermissionMode: (mode: PermissionMode) => void;
   // 权限审批
-  onPermissionRespond: (requestId: string, behavior: "allow" | "deny") => void;
+  onPermissionRespond: (requestId: string, behavior: "allow" | "deny", sessionId: string) => void;
   // 附件
   attachments: Attachment[];
   onAddAttachments: (files: FileList) => void;
@@ -166,8 +166,8 @@ export function Chat({
       {/* Main content */}
       <div className="flex flex-col flex-1 min-w-0 overflow-hidden">
         {/* Header */}
-        <header className="flex items-center justify-between px-4 py-2 pt-[calc(0.625rem+env(safe-area-inset-top,0px))] bg-card/80 backdrop-blur-md border-b border-(--color-overlay-border) min-h-[52px] relative z-10">
-          <div className="flex items-center gap-3">
+        <header className="grid grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-2 px-4 py-2 pt-[calc(0.625rem+env(safe-area-inset-top,0px))] bg-card/80 backdrop-blur-md border-b border-(--color-overlay-border) min-h-[52px] relative z-10">
+          <div className="flex min-w-0 items-center gap-2.5">
             {!isEffectivelyPinned && (
               <Button
                 variant="ghost"
@@ -178,52 +178,57 @@ export function Chat({
                 <Menu className="size-5" />
               </Button>
             )}
-            <Badge variant="outline" className="gap-1.5 py-0.5 px-2 text-[11px] border-(--color-overlay-border) bg-(--color-overlay) font-normal">
+            <Badge
+              variant="outline"
+              className="max-w-full gap-1.5 py-0.5 px-2 text-[10px] sm:text-[11px] border-(--color-overlay-border) bg-(--color-overlay) font-normal"
+            >
               <span className={`size-1.5 rounded-full ${statusColor}`} />
-              {statusText}
+              <span className="truncate">{statusText}</span>
             </Badge>
           </div>
 
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <button className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg hover:bg-(--color-overlay-hover) transition-colors cursor-pointer absolute left-1/2 -translate-x-1/2 max-w-[50%]">
-                <FolderOpen className="size-3.5 text-primary shrink-0" />
-                <span className="text-sm font-semibold text-foreground/90 tracking-tight truncate">
-                  {activeProject?.name || "All Projects"}
-                </span>
-                <ChevronDown className="size-3 text-muted-foreground/60 shrink-0" />
-              </button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="center" className="w-56">
-              <DropdownMenuItem onClick={() => onSwitchProject(null)}>
-                <Layers className="size-4" />
-                All Projects
-                {!activeProject && <Check className="size-3 ml-auto text-primary" />}
-              </DropdownMenuItem>
-              {projects.length > 0 && <DropdownMenuSeparator />}
-              {projects.map((project) => (
-                <DropdownMenuItem
-                  key={project.path}
-                  onClick={() => onSwitchProject(project)}
-                >
-                  <FolderOpen className="size-4" />
-                  <div className="flex-1 min-w-0">
-                    <span className="truncate">{project.name}</span>
-                  </div>
-                  {activeProject?.path === project.path && (
-                    <Check className="size-3 ml-auto text-primary shrink-0" />
-                  )}
+          <div className="min-w-0 px-1">
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <button className="mx-auto flex h-9 min-w-0 max-w-full items-center justify-center gap-1.5 rounded-lg px-2 py-1 transition-colors hover:bg-(--color-overlay-hover) cursor-pointer">
+                  <FolderOpen className="size-3.5 text-primary shrink-0" />
+                  <span className="min-w-0 truncate text-sm font-semibold text-foreground/90 tracking-tight">
+                    {activeProject?.name || "All Projects"}
+                  </span>
+                  <ChevronDown className="size-3 text-muted-foreground/60 shrink-0" />
+                </button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="center" className="w-56">
+                <DropdownMenuItem onClick={() => onSwitchProject(null)}>
+                  <Layers className="size-4" />
+                  All Projects
+                  {!activeProject && <Check className="size-3 ml-auto text-primary" />}
                 </DropdownMenuItem>
-              ))}
-              <DropdownMenuSeparator />
-              <DropdownMenuItem onClick={onManageProjects}>
-                <Plus className="size-4" />
-                Manage Projects...
-              </DropdownMenuItem>
-            </DropdownMenuContent>
-          </DropdownMenu>
+                {projects.length > 0 && <DropdownMenuSeparator />}
+                {projects.map((project) => (
+                  <DropdownMenuItem
+                    key={project.path}
+                    onClick={() => onSwitchProject(project)}
+                  >
+                    <FolderOpen className="size-4" />
+                    <div className="flex-1 min-w-0">
+                      <span className="truncate">{project.name}</span>
+                    </div>
+                    {activeProject?.path === project.path && (
+                      <Check className="size-3 ml-auto text-primary shrink-0" />
+                    )}
+                  </DropdownMenuItem>
+                ))}
+                <DropdownMenuSeparator />
+                <DropdownMenuItem onClick={onManageProjects}>
+                  <Plus className="size-4" />
+                  Manage Projects...
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
+          </div>
 
-          <div className="flex items-center gap-1">
+          <div className="flex items-center justify-self-end gap-1">
             {activeProject && (
               <Button
                 variant="ghost"

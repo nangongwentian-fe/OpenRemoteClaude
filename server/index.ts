@@ -90,17 +90,23 @@ app.get("*", serveStatic({ path: "./dist/client/index.html" }));
 const server = Bun.serve({
   port: PORT,
   fetch: app.fetch,
-  websocket,
+  websocket: {
+    ...websocket,
+    // 使用应用层 ping/pong 保活，避免默认空闲超时在移动端/PWA 上误杀连接。
+    idleTimeout: 0,
+    sendPings: false,
+  },
 });
+const listeningPort = server.port ?? PORT;
 
-console.log(`[Server] Running at http://localhost:${server.port}`);
+console.log(`[Server] Running at http://localhost:${listeningPort}`);
 
 // 并行启动网络服务
 const networkTasks: Promise<void>[] = [];
 
 if (ENABLE_TAILSCALE) {
   networkTasks.push(
-    detectTailscale(server.port)
+    detectTailscale(listeningPort)
       .then((info) => {
         if (info.isAvailable) {
           console.log(`[Tailscale] Detected: ${info.ip}${info.hostname ? ` (${info.hostname})` : ""}`);

@@ -66,13 +66,14 @@ export type ClientMessage =
         permissionMode?: PermissionMode;
       };
     }
+  | { type: "reattach"; payload: { sessionId: string } }
   | { type: "interrupt" }
   | { type: "abort" }
   | { type: "ping" }
   | { type: "set_model"; payload: { model: string } }
   | { type: "set_permission_mode"; payload: { mode: PermissionMode } }
-  | { type: "request_capabilities"; payload?: { cwd?: string } }
-  | { type: "permission_response"; payload: { requestId: string; behavior: "allow" | "deny" } };
+  | { type: "request_capabilities"; payload?: { cwd?: string; sessionId?: string } }
+  | { type: "permission_response"; payload: { requestId: string; behavior: "allow" | "deny"; sessionId?: string } };
 
 // 服务端 → 客户端
 export type ServerMessage =
@@ -137,6 +138,7 @@ export type ServerMessage =
   | {
       type: "permission_request";
       payload: {
+        sessionId: string;
         requestId: string;
         toolName: string;
         input: Record<string, unknown>;
@@ -176,6 +178,7 @@ export type DisplayBlock =
     }
   | {
       type: "permission_request";
+      sessionId: string;
       requestId: string;
       toolName: string;
       input: Record<string, unknown>;

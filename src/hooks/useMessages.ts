@@ -270,9 +270,10 @@ export function useMessages() {
       }
 
       case "permission_request": {
-        const { requestId, toolName, input, decisionReason, description } = msg.payload;
+        const { sessionId, requestId, toolName, input, decisionReason, description } = msg.payload;
         const permBlock: DisplayBlock = {
           type: "permission_request",
+          sessionId,
           requestId,
           toolName,
           input,

@@ -108,6 +108,12 @@ export default function App() {
     }
   }, [ws.status, ws.requestCapabilities, capabilitiesCwd]);
 
+  useEffect(() => {
+    if (ws.status === "authenticated" && isProcessing && currentSessionId) {
+      ws.reattachSession(currentSessionId);
+    }
+  }, [ws.status, ws.reattachSession, isProcessing, currentSessionId]);
+
   if (!auth.token) {
     return (
       <Login
@@ -145,8 +151,8 @@ export default function App() {
   );
 
   const handlePermissionRespond = useCallback(
-    (requestId: string, behavior: "allow" | "deny") => {
-      ws.sendPermissionResponse(requestId, behavior);
+    (requestId: string, behavior: "allow" | "deny", sessionId: string) => {
+      ws.sendPermissionResponse(requestId, behavior, sessionId);
       updatePermissionStatus(requestId, behavior === "allow" ? "allowed" : "denied");
     },
     [ws, updatePermissionStatus]
@@ -182,7 +188,9 @@ export default function App() {
 
   const handleSwitchThread = async (threadId: string) => {
     const rawMessages = await switchThread(threadId);
-    loadHistoryMessages(rawMessages);
+    if (rawMessages !== null) {
+      loadHistoryMessages(rawMessages);
+    }
   };
 
   const handleNewThread = () => {

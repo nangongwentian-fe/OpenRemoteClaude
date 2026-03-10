@@ -57,7 +57,7 @@ export function FileViewer({
   return (
     <div className="flex flex-col h-full">
       {/* Header */}
-      <div className="flex items-center gap-2 px-3 py-2 border-b border-(--color-overlay-border) shrink-0">
+      <div className="flex items-center gap-2 border-b border-(--color-overlay-border) py-2 pl-3 pr-12 shrink-0 sm:pr-3">
         <Button
           variant="ghost"
           size="icon"
@@ -73,7 +73,7 @@ export function FileViewer({
           variant="ghost"
           size="sm"
           className={cn(
-            "h-7 rounded-md px-2 text-xs text-muted-foreground hover:bg-(--color-overlay-hover)",
+            "h-7 rounded-md px-1.5 text-[11px] text-muted-foreground hover:bg-(--color-overlay-hover) sm:px-2 sm:text-xs",
             wrapLines && "text-primary"
           )}
           aria-pressed={wrapLines}
@@ -85,11 +85,12 @@ export function FileViewer({
         </Button>
         <button
           onClick={() => onAddFileReference(file.path, file.name)}
-          className="flex items-center gap-1 px-2 py-1 rounded-md text-xs text-muted-foreground hover:text-primary hover:bg-(--color-overlay-hover) transition-colors cursor-pointer"
+          className="flex shrink-0 items-center gap-1 rounded-md px-1.5 py-1 text-[11px] text-muted-foreground transition-colors hover:text-primary hover:bg-(--color-overlay-hover) cursor-pointer sm:px-2 sm:text-xs"
           title="Reference entire file"
+          aria-label="Reference entire file"
         >
           <AtSign className="size-3" />
-          File
+          <span className="hidden sm:inline">File</span>
         </button>
       </div>
 

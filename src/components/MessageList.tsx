@@ -3,7 +3,7 @@ import { MessageBubble } from "./MessageBubble";
 
 interface Props {
   messages: ChatMessage[];
-  onPermissionRespond?: (requestId: string, behavior: "allow" | "deny") => void;
+  onPermissionRespond?: (requestId: string, behavior: "allow" | "deny", sessionId: string) => void;
 }
 
 export function MessageList({ messages, onPermissionRespond }: Props) {

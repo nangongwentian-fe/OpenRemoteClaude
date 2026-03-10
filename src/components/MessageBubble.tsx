@@ -11,7 +11,7 @@ import { cn } from "@/lib/utils";
 
 interface Props {
   message: ChatMessage;
-  onPermissionRespond?: (requestId: string, behavior: "allow" | "deny") => void;
+  onPermissionRespond?: (requestId: string, behavior: "allow" | "deny", sessionId: string) => void;
 }
 
 function getBlockKey(block: DisplayBlock, index: number): string {
@@ -61,7 +61,7 @@ const BlockRenderer = memo(function BlockRenderer({
 }: {
   block: DisplayBlock;
   isUser: boolean;
-  onPermissionRespond?: (requestId: string, behavior: "allow" | "deny") => void;
+  onPermissionRespond?: (requestId: string, behavior: "allow" | "deny", sessionId: string) => void;
 }) {
   switch (block.type) {
     case "text":
@@ -88,6 +88,7 @@ const BlockRenderer = memo(function BlockRenderer({
     case "permission_request":
       return (
         <PermissionCard
+          sessionId={block.sessionId}
           requestId={block.requestId}
           toolName={block.toolName}
           input={block.input}

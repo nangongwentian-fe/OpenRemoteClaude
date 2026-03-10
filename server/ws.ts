@@ -21,43 +21,71 @@ const sessionManager = new ClaudeSessionManager();
 
 export { sessionManager };
 
-function send(ws: ServerWebSocket<WSState>, data: unknown) {
-  if (ws.readyState === 1) {
+function send(ws: ServerWebSocket<WSState> | null | undefined, data: unknown) {
+  if (ws?.readyState === 1) {
     ws.send(JSON.stringify(data));
   }
 }
 
-// Delta 微批处理：合并 16ms 内的同类型 delta，减少 WebSocket 帧数
-type DeltaBuffer = {
-  text: Map<number, string>;      // blockIndex -> accumulated text
+// 每个 session 一个可重绑定的流式转发器，允许断线后把输出挂到新连接。
+type SessionBinding = {
+  ws: ServerWebSocket<WSState> | null;
+  pendingMessages: unknown[];
+  text: Map<number, string>;       // blockIndex -> accumulated text
   thinking: Map<number, string>;   // blockIndex -> accumulated thinking
   toolInput: Map<number, string>;  // blockIndex -> accumulated input delta
   timer: ReturnType<typeof setTimeout> | null;
 };
 
-function createDeltaBuffer(): DeltaBuffer {
-  return { text: new Map(), thinking: new Map(), toolInput: new Map(), timer: null };
+function createSessionBinding(ws: ServerWebSocket<WSState> | null): SessionBinding {
+  return {
+    ws,
+    pendingMessages: [],
+    text: new Map(),
+    thinking: new Map(),
+    toolInput: new Map(),
+    timer: null,
+  };
 }
 
-function flushDeltaBuffer(ws: ServerWebSocket<WSState>, buf: DeltaBuffer) {
-  for (const [blockIndex, text] of buf.text) {
-    send(ws, { type: "stream_delta", payload: { text, blockIndex } });
+function sendOrQueue(binding: SessionBinding, data: unknown) {
+  if (binding.ws?.readyState === 1) {
+    binding.ws.send(JSON.stringify(data));
+    return;
   }
-  for (const [blockIndex, thinking] of buf.thinking) {
-    send(ws, { type: "thinking_delta", payload: { thinking, blockIndex } });
-  }
-  for (const [blockIndex, delta] of buf.toolInput) {
-    send(ws, { type: "tool_input_delta", payload: { delta, blockIndex } });
-  }
-  buf.text.clear();
-  buf.thinking.clear();
-  buf.toolInput.clear();
-  buf.timer = null;
+  binding.pendingMessages.push(data);
 }
 
-function scheduleDeltaFlush(ws: ServerWebSocket<WSState>, buf: DeltaBuffer) {
-  if (!buf.timer) {
-    buf.timer = setTimeout(() => flushDeltaBuffer(ws, buf), 16);
+function flushQueuedMessages(binding: SessionBinding) {
+  if (binding.ws?.readyState !== 1 || binding.pendingMessages.length === 0) return;
+
+  const queued = [...binding.pendingMessages];
+  binding.pendingMessages = [];
+
+  for (const message of queued) {
+    binding.ws.send(JSON.stringify(message));
+  }
+}
+
+function flushDeltaBuffer(binding: SessionBinding) {
+  for (const [blockIndex, text] of binding.text) {
+    sendOrQueue(binding, { type: "stream_delta", payload: { text, blockIndex } });
+  }
+  for (const [blockIndex, thinking] of binding.thinking) {
+    sendOrQueue(binding, { type: "thinking_delta", payload: { thinking, blockIndex } });
+  }
+  for (const [blockIndex, delta] of binding.toolInput) {
+    sendOrQueue(binding, { type: "tool_input_delta", payload: { delta, blockIndex } });
+  }
+  binding.text.clear();
+  binding.thinking.clear();
+  binding.toolInput.clear();
+  binding.timer = null;
+}
+
+function scheduleDeltaFlush(binding: SessionBinding) {
+  if (!binding.timer) {
+    binding.timer = setTimeout(() => flushDeltaBuffer(binding), 16);
   }
 }
 
@@ -71,7 +99,7 @@ function mapCommands(commands: Array<Record<string, unknown>>) {
     .filter((command) => command.name);
 }
 
-function forwardSDKMessage(ws: ServerWebSocket<WSState>, msg: SDKMessage, deltaBuf: DeltaBuffer) {
+function forwardSDKMessage(binding: SessionBinding, msg: SDKMessage) {
   switch (msg.type) {
     case "stream_event": {
       const event = msg.event as Record<string, unknown>;
@@ -84,31 +112,31 @@ function forwardSDKMessage(ws: ServerWebSocket<WSState>, msg: SDKMessage, deltaB
         if (delta?.type === "text_delta") {
           // 使用 buffer 合并文本 delta
           const blockIndex = event.index as number;
-          const existing = deltaBuf.text.get(blockIndex) || "";
-          deltaBuf.text.set(blockIndex, existing + (delta.text as string));
-          scheduleDeltaFlush(ws, deltaBuf);
+          const existing = binding.text.get(blockIndex) || "";
+          binding.text.set(blockIndex, existing + (delta.text as string));
+          scheduleDeltaFlush(binding);
         } else if (delta?.type === "thinking_delta") {
           // 使用 buffer 合并 thinking delta
           const blockIndex = event.index as number;
-          const existing = deltaBuf.thinking.get(blockIndex) || "";
-          deltaBuf.thinking.set(blockIndex, existing + (delta.thinking as string));
-          scheduleDeltaFlush(ws, deltaBuf);
+          const existing = binding.thinking.get(blockIndex) || "";
+          binding.thinking.set(blockIndex, existing + (delta.thinking as string));
+          scheduleDeltaFlush(binding);
         } else if (delta?.type === "input_json_delta") {
           // 使用 buffer 合并 tool input delta
           const blockIndex = event.index as number;
-          const existing = deltaBuf.toolInput.get(blockIndex) || "";
-          deltaBuf.toolInput.set(blockIndex, existing + (delta.partial_json as string));
-          scheduleDeltaFlush(ws, deltaBuf);
+          const existing = binding.toolInput.get(blockIndex) || "";
+          binding.toolInput.set(blockIndex, existing + (delta.partial_json as string));
+          scheduleDeltaFlush(binding);
         }
       } else if (eventType === "content_block_start") {
         // block start 前先 flush 积压的 delta
-        if (deltaBuf.timer) {
-          clearTimeout(deltaBuf.timer);
-          flushDeltaBuffer(ws, deltaBuf);
+        if (binding.timer) {
+          clearTimeout(binding.timer);
+          flushDeltaBuffer(binding);
         }
         const block = event.content_block as Record<string, unknown>;
         if (block?.type === "tool_use") {
-          send(ws, {
+          sendOrQueue(binding, {
             type: "tool_start",
             payload: {
               id: block.id,
@@ -117,18 +145,18 @@ function forwardSDKMessage(ws: ServerWebSocket<WSState>, msg: SDKMessage, deltaB
             },
           });
         } else if (block?.type === "thinking") {
-          send(ws, {
+          sendOrQueue(binding, {
             type: "thinking_start",
             payload: { blockIndex: event.index },
           });
         }
       } else if (eventType === "content_block_stop") {
         // block stop 前先 flush 积压的 delta
-        if (deltaBuf.timer) {
-          clearTimeout(deltaBuf.timer);
-          flushDeltaBuffer(ws, deltaBuf);
+        if (binding.timer) {
+          clearTimeout(binding.timer);
+          flushDeltaBuffer(binding);
         }
-        send(ws, {
+        sendOrQueue(binding, {
           type: "block_stop",
           payload: { blockIndex: event.index },
         });
@@ -138,9 +166,9 @@ function forwardSDKMessage(ws: ServerWebSocket<WSState>, msg: SDKMessage, deltaB
 
     case "assistant": {
       // 完整消息到达前 flush 所有积压的 delta
-      if (deltaBuf.timer) {
-        clearTimeout(deltaBuf.timer);
-        flushDeltaBuffer(ws, deltaBuf);
+      if (binding.timer) {
+        clearTimeout(binding.timer);
+        flushDeltaBuffer(binding);
       }
       const message = msg.message as Record<string, unknown>;
       const content = message?.content;
@@ -166,7 +194,7 @@ function forwardSDKMessage(ws: ServerWebSocket<WSState>, msg: SDKMessage, deltaB
             };
           return block;
         });
-        send(ws, {
+        sendOrQueue(binding, {
           type: "assistant_message",
           payload: { content: blocks, model: message.model },
         });
@@ -176,11 +204,11 @@ function forwardSDKMessage(ws: ServerWebSocket<WSState>, msg: SDKMessage, deltaB
 
     case "result": {
       // result 前 flush 所有积压的 delta
-      if (deltaBuf.timer) {
-        clearTimeout(deltaBuf.timer);
-        flushDeltaBuffer(ws, deltaBuf);
+      if (binding.timer) {
+        clearTimeout(binding.timer);
+        flushDeltaBuffer(binding);
       }
-      send(ws, {
+      sendOrQueue(binding, {
         type: "result",
         payload: {
           sessionId: msg.session_id,
@@ -208,7 +236,7 @@ function forwardSDKMessage(ws: ServerWebSocket<WSState>, msg: SDKMessage, deltaB
           ? (msg.skills as string[])
           : [];
 
-        send(ws, {
+        sendOrQueue(binding, {
           type: "system_init",
           payload: {
             sessionId: msg.session_id,
@@ -224,7 +252,7 @@ function forwardSDKMessage(ws: ServerWebSocket<WSState>, msg: SDKMessage, deltaB
         // 异步获取详细能力信息
         const sessionId = msg.session_id as string;
         if (sessionId) {
-          sendCapabilities(ws, sessionId);
+          sendCapabilities(binding.ws, sessionId);
         }
       }
       break;
@@ -232,10 +260,10 @@ function forwardSDKMessage(ws: ServerWebSocket<WSState>, msg: SDKMessage, deltaB
   }
 }
 
-async function sendCapabilities(ws: ServerWebSocket<WSState>, sessionId: string) {
+async function sendCapabilities(ws: ServerWebSocket<WSState> | null, sessionId: string) {
   try {
     const caps = await sessionManager.getCapabilities(sessionId);
-    if (!caps) return;
+    if (!caps) return false;
 
     send(ws, {
       type: "capabilities",
@@ -256,23 +284,93 @@ async function sendCapabilities(ws: ServerWebSocket<WSState>, sessionId: string)
         })),
       },
     });
+    return true;
   } catch {
     // capabilities 获取失败不影响正常使用
+    return false;
   }
 }
 
 export function createWSHandlers(jwtSecret: string, db: DataStore) {
   const disconnectTimers = new Map<string, ReturnType<typeof setTimeout>>();
-  // 每个连接一个 delta buffer
-  const deltaBuffers = new WeakMap<ServerWebSocket<WSState>, DeltaBuffer>();
+  const sessionBindings = new Map<string, SessionBinding>();
 
-  function getDeltaBuffer(ws: ServerWebSocket<WSState>): DeltaBuffer {
-    let buf = deltaBuffers.get(ws);
-    if (!buf) {
-      buf = createDeltaBuffer();
-      deltaBuffers.set(ws, buf);
+  function clearDisconnectTimer(sessionId: string) {
+    const timer = disconnectTimers.get(sessionId);
+    if (!timer) return;
+    clearTimeout(timer);
+    disconnectTimers.delete(sessionId);
+  }
+
+  function startDisconnectTimer(sessionId: string) {
+    if (disconnectTimers.has(sessionId)) return;
+
+    disconnectTimers.set(
+      sessionId,
+      setTimeout(() => {
+        console.log(`[WS] Client did not reconnect, aborting session ${sessionId}`);
+        sessionManager.denyAllPendingPermissions(sessionId);
+        sessionManager.abortIfActive(sessionId);
+        sessionBindings.delete(sessionId);
+        disconnectTimers.delete(sessionId);
+      }, DISCONNECT_ABORT_DELAY_MS)
+    );
+  }
+
+  function detachSessionFromSocket(ws: ServerWebSocket<WSState>, sessionId: string) {
+    const binding = sessionBindings.get(sessionId);
+    if (binding?.ws === ws) {
+      binding.ws = null;
+      startDisconnectTimer(sessionId);
     }
-    return buf;
+    if (ws.data.activeSessionId === sessionId) {
+      ws.data.activeSessionId = null;
+    }
+  }
+
+  function replayPendingPermissions(ws: ServerWebSocket<WSState>, sessionId: string) {
+    for (const permReq of sessionManager.getPendingPermissions(sessionId)) {
+      send(ws, {
+        type: "permission_request",
+        payload: {
+          sessionId,
+          ...permReq,
+        },
+      });
+    }
+  }
+
+  function attachSession(ws: ServerWebSocket<WSState>, sessionId: string) {
+    if (ws.data.activeSessionId && ws.data.activeSessionId !== sessionId) {
+      if (sessionManager.isSessionActive(ws.data.activeSessionId)) {
+        detachSessionFromSocket(ws, ws.data.activeSessionId);
+      } else {
+        const currentBinding = sessionBindings.get(ws.data.activeSessionId);
+        if (currentBinding?.ws === ws) {
+          currentBinding.ws = null;
+        }
+        ws.data.activeSessionId = null;
+      }
+    }
+
+    const binding = sessionBindings.get(sessionId);
+    if (!binding || !sessionManager.isSessionActive(sessionId)) return false;
+    if (binding.ws && binding.ws !== ws) {
+      binding.ws.data.activeSessionId = null;
+    }
+    binding.ws = ws;
+    ws.data.activeSessionId = sessionId;
+    clearDisconnectTimer(sessionId);
+    flushQueuedMessages(binding);
+    if (binding.timer || binding.text.size > 0 || binding.thinking.size > 0 || binding.toolInput.size > 0) {
+      if (binding.timer) {
+        clearTimeout(binding.timer);
+      }
+      flushDeltaBuffer(binding);
+    }
+    replayPendingPermissions(ws, sessionId);
+    void sendCapabilities(ws, sessionId);
+    return true;
   }
 
   return {
@@ -339,75 +437,92 @@ export function createWSHandlers(jwtSecret: string, db: DataStore) {
             return;
           }
 
-          const cwd = payload.cwd || process.cwd();
-          const resolvedPrompt = await sessionManager.resolvePrompt(payload.prompt, cwd);
-
-          // 构建 SDK 选项
-          const sessionOpts: SessionOptions = {};
-          if (payload.model) sessionOpts.model = payload.model;
-          if (payload.effort) sessionOpts.effort = payload.effort as SessionOptions["effort"];
-          if (payload.thinking) {
-            if (payload.thinking === "disabled") {
-              sessionOpts.thinking = { type: "disabled" };
-            } else if (payload.thinking === "adaptive") {
-              sessionOpts.thinking = { type: "adaptive" };
-            } else if (payload.thinking === "enabled") {
-              sessionOpts.thinking = { type: "enabled" };
-            }
-          }
-          if (payload.permissionMode) {
-            sessionOpts.permissionMode = payload.permissionMode;
-          }
-
-          send(ws, { type: "chat_started", payload: { cwd } });
-
-          // 如果在恢复之前有断连定时器，取消它
-          if (payload.resumeSessionId) {
-            const timer = disconnectTimers.get(payload.resumeSessionId);
-            if (timer) {
-              clearTimeout(timer);
-              disconnectTimers.delete(payload.resumeSessionId);
-            }
+          if (payload.resumeSessionId && sessionManager.isSessionActive(payload.resumeSessionId)) {
+            send(ws, {
+              type: "error",
+              payload: { message: "Session is still processing. Reattach before sending another message." },
+            });
+            return;
           }
 
           try {
-            const deltaBuf = getDeltaBuffer(ws);
-            const sessionId = await sessionManager.startSession(
+            if (
+              ws.data.activeSessionId &&
+              ws.data.activeSessionId !== payload.resumeSessionId &&
+              sessionManager.isSessionActive(ws.data.activeSessionId)
+            ) {
+              send(ws, {
+                type: "error",
+                payload: { message: "A session is already processing on this connection. Interrupt or abort it first." },
+              });
+              return;
+            }
+
+            const cwd = payload.cwd || process.cwd();
+            const resolvedPrompt = await sessionManager.resolvePrompt(payload.prompt, cwd);
+
+            const sessionOpts: SessionOptions = {};
+            if (payload.model) sessionOpts.model = payload.model;
+            if (payload.effort) sessionOpts.effort = payload.effort as SessionOptions["effort"];
+            if (payload.thinking) {
+              if (payload.thinking === "disabled") {
+                sessionOpts.thinking = { type: "disabled" };
+              } else if (payload.thinking === "adaptive") {
+                sessionOpts.thinking = { type: "adaptive" };
+              } else if (payload.thinking === "enabled") {
+                sessionOpts.thinking = { type: "enabled" };
+              }
+            }
+            if (payload.permissionMode) {
+              sessionOpts.permissionMode = payload.permissionMode;
+            }
+
+            send(ws, { type: "chat_started", payload: { cwd } });
+            if (payload.resumeSessionId) clearDisconnectTimer(payload.resumeSessionId);
+
+            let sessionId = payload.resumeSessionId || "";
+            const binding = createSessionBinding(ws);
+            sessionId = await sessionManager.startSession(
               resolvedPrompt,
               cwd,
-              (msg) => forwardSDKMessage(ws, msg as SDKMessage, deltaBuf),
+              (msg) => forwardSDKMessage(binding, msg as SDKMessage),
               () => {
-                ws.data.activeSessionId = null;
-                const timer = disconnectTimers.get(sessionId);
-                if (timer) {
-                  clearTimeout(timer);
-                  disconnectTimers.delete(sessionId);
+                if (binding.ws?.data.activeSessionId === sessionId) {
+                  binding.ws.data.activeSessionId = null;
                 }
-                send(ws, {
+                clearDisconnectTimer(sessionId);
+                sessionBindings.delete(sessionId);
+                send(binding.ws, {
                   type: "chat_complete",
                   payload: { sessionId },
                 });
-                sendCapabilities(ws, sessionId);
+                void sendCapabilities(binding.ws, sessionId);
               },
               (err) => {
-                ws.data.activeSessionId = null;
-                const timer = disconnectTimers.get(sessionId);
-                if (timer) {
-                  clearTimeout(timer);
-                  disconnectTimers.delete(sessionId);
+                if (binding.ws?.data.activeSessionId === sessionId) {
+                  binding.ws.data.activeSessionId = null;
                 }
-                send(ws, {
+                clearDisconnectTimer(sessionId);
+                sessionBindings.delete(sessionId);
+                send(binding.ws, {
                   type: "error",
                   payload: { message: err.message },
                 });
               },
               (permReq) => {
-                send(ws, { type: "permission_request", payload: permReq });
+                send(binding.ws, {
+                  type: "permission_request",
+                  payload: {
+                    sessionId,
+                    ...permReq,
+                  },
+                });
               },
               payload.resumeSessionId,
               sessionOpts
             );
 
+            sessionBindings.set(sessionId, binding);
             ws.data.activeSessionId = sessionId;
             db.createSession(sessionId, cwd);
             db.saveMessage(sessionId, "user", { prompt: payload.prompt });
@@ -423,13 +538,41 @@ export function createWSHandlers(jwtSecret: string, db: DataStore) {
           break;
         }
 
+        case "reattach": {
+          if (!ws.data.authenticated) return;
+          const payload = data.payload as { sessionId?: string };
+          if (!payload?.sessionId) {
+            send(ws, {
+              type: "error",
+              payload: { message: "Missing sessionId" },
+            });
+            return;
+          }
+
+          if (!sessionManager.isSessionActive(payload.sessionId)) {
+            send(ws, {
+              type: "error",
+              payload: { message: "Session is no longer active" },
+            });
+            return;
+          }
+
+          if (!attachSession(ws, payload.sessionId)) {
+            send(ws, {
+              type: "error",
+              payload: { message: "Failed to reattach session" },
+            });
+          }
+          break;
+        }
+
         case "set_model": {
           if (!ws.data.authenticated) return;
-          const activeSession = sessionManager.getActiveSession();
-          if (activeSession) {
+          const sessionId = ws.data.activeSessionId;
+          if (sessionId) {
             try {
               const model = (data.payload as { model: string }).model;
-              await sessionManager.setModel(activeSession.id, model);
+              await sessionManager.setModel(sessionId, model);
               send(ws, { type: "model_changed", payload: { model } });
             } catch (err) {
               send(ws, {
@@ -443,11 +586,11 @@ export function createWSHandlers(jwtSecret: string, db: DataStore) {
 
         case "set_permission_mode": {
           if (!ws.data.authenticated) return;
-          const active = sessionManager.getActiveSession();
-          if (active) {
+          const sessionId = ws.data.activeSessionId;
+          if (sessionId) {
             try {
               const mode = (data.payload as { mode: string }).mode;
-              await sessionManager.setPermissionMode(active.id, mode);
+              await sessionManager.setPermissionMode(sessionId, mode);
               send(ws, { type: "permission_mode_changed", payload: { mode } });
             } catch (err) {
               send(ws, {
@@ -461,13 +604,12 @@ export function createWSHandlers(jwtSecret: string, db: DataStore) {
 
         case "request_capabilities": {
           if (!ws.data.authenticated) return;
-          const session = sessionManager.getAnySessionWithHandle();
-          if (session) {
-            await sendCapabilities(ws, session.id);
-          } else {
+          const payload = (data.payload as { cwd?: string; sessionId?: string } | undefined) ?? {};
+          const sessionId = payload.sessionId || ws.data.activeSessionId;
+          const sent = sessionId ? await sendCapabilities(ws, sessionId) : false;
+          if (!sent) {
             // 无活跃 session 时通过探测获取 capabilities
             try {
-              const payload = (data.payload as { cwd?: string } | undefined) ?? {};
               const caps = await sessionManager.probeCapabilities(payload.cwd || process.cwd());
               if (caps) {
                 send(ws, {
@@ -496,9 +638,9 @@ export function createWSHandlers(jwtSecret: string, db: DataStore) {
 
         case "interrupt": {
           if (!ws.data.authenticated) return;
-          const interruptSession = sessionManager.getActiveSession();
-          if (interruptSession) {
-            await sessionManager.interruptSession(interruptSession.id);
+          const sessionId = ws.data.activeSessionId;
+          if (sessionId) {
+            await sessionManager.interruptSession(sessionId);
             send(ws, { type: "interrupted", payload: {} });
           }
           break;
@@ -506,9 +648,16 @@ export function createWSHandlers(jwtSecret: string, db: DataStore) {
 
         case "abort": {
           if (!ws.data.authenticated) return;
-          const abortSession = sessionManager.getActiveSession();
-          if (abortSession) {
-            sessionManager.abortSession(abortSession.id);
+          const sessionId = ws.data.activeSessionId;
+          if (sessionId) {
+            sessionManager.abortSession(sessionId);
+            const binding = sessionBindings.get(sessionId);
+            if (binding?.ws?.data.activeSessionId === sessionId) {
+              binding.ws.data.activeSessionId = null;
+            }
+            ws.data.activeSessionId = null;
+            sessionBindings.delete(sessionId);
+            clearDisconnectTimer(sessionId);
             send(ws, { type: "aborted", payload: {} });
           }
           break;
@@ -516,10 +665,10 @@ export function createWSHandlers(jwtSecret: string, db: DataStore) {
 
         case "permission_response": {
           if (!ws.data.authenticated) return;
-          const permPayload = data.payload as { requestId: string; behavior: "allow" | "deny" };
-          const permSession = sessionManager.getActiveSession();
-          if (permSession && permPayload?.requestId) {
-            sessionManager.resolvePermission(permSession.id, permPayload.requestId, permPayload.behavior);
+          const permPayload = data.payload as { requestId: string; behavior: "allow" | "deny"; sessionId?: string };
+          const sessionId = permPayload?.sessionId || ws.data.activeSessionId;
+          if (sessionId && permPayload?.requestId) {
+            sessionManager.resolvePermission(sessionId, permPayload.requestId, permPayload.behavior);
           }
           break;
         }
@@ -534,28 +683,9 @@ export function createWSHandlers(jwtSecret: string, db: DataStore) {
     close(ws: ServerWebSocket<WSState>) {
       console.log(`[WS] Client disconnected: ${ws.data.clientId}`);
 
-      // 清理 delta buffer
-      const buf = deltaBuffers.get(ws);
-      if (buf?.timer) {
-        clearTimeout(buf.timer);
-        buf.timer = null;
-      }
-
       const activeSessionId = ws.data.activeSessionId;
       if (activeSessionId) {
-        // 立即 deny 所有 pending 权限请求，避免卡死
-        sessionManager.denyAllPendingPermissions(activeSessionId);
-
-        if (!disconnectTimers.has(activeSessionId)) {
-          disconnectTimers.set(
-            activeSessionId,
-            setTimeout(() => {
-              console.log(`[WS] Client did not reconnect, aborting session ${activeSessionId}`);
-              sessionManager.abortIfActive(activeSessionId);
-              disconnectTimers.delete(activeSessionId);
-            }, DISCONNECT_ABORT_DELAY_MS)
-          );
-        }
+        detachSessionFromSocket(ws, activeSessionId);
       }
     },
   };

@@ -45,16 +45,18 @@ const TOOL_ICONS: Record<string, LucideIcon> = {
 };
 
 interface Props {
+  sessionId: string;
   requestId: string;
   toolName: string;
   input: Record<string, unknown>;
   status: "pending" | "allowed" | "denied";
   decisionReason?: string;
   description?: string;
-  onRespond: (requestId: string, behavior: "allow" | "deny") => void;
+  onRespond: (requestId: string, behavior: "allow" | "deny", sessionId: string) => void;
 }
 
 export function PermissionCard({
+  sessionId,
   requestId,
   toolName,
   input,
@@ -142,14 +144,14 @@ export function PermissionCard({
         {status === "pending" && (
           <div className="border-t border-(--color-overlay-border) px-3 py-2 flex items-center justify-end gap-2">
             <button
-              onClick={() => onRespond(requestId, "deny")}
+              onClick={() => onRespond(requestId, "deny", sessionId)}
               className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium border border-destructive/30 text-destructive hover:bg-destructive/10 transition-colors cursor-pointer"
             >
               <X className="size-3" />
               Deny
             </button>
             <button
-              onClick={() => onRespond(requestId, "allow")}
+              onClick={() => onRespond(requestId, "allow", sessionId)}
               className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium bg-success text-white hover:bg-success/90 transition-colors cursor-pointer"
             >
               <Check className="size-3" />

@@ -9,6 +9,8 @@ import type {
 
 const MAX_RECONNECT_ATTEMPTS = 10;
 const HEARTBEAT_INTERVAL = 30_000;
+const STALE_CONNECTION_THRESHOLD = 75_000;
+const BACKGROUND_RECONNECT_THRESHOLD = 60_000;
 
 export function useWebSocket(
   token: string | null,
@@ -20,10 +22,19 @@ export function useWebSocket(
   const reconnectAttempts = useRef(0);
   const reconnectTimer = useRef<ReturnType<typeof setTimeout>>(undefined);
   const heartbeatTimer = useRef<ReturnType<typeof setInterval>>(undefined);
+  const statusRef = useRef<ConnectionStatus>("disconnected");
+  const lastActivityAt = useRef(0);
+  const hiddenAt = useRef<number | null>(null);
+  const pendingMessagesRef = useRef<ClientMessage[]>([]);
   const onMessageRef = useRef(onMessage);
   onMessageRef.current = onMessage;
   const onAuthFailedRef = useRef(onAuthFailed);
   onAuthFailedRef.current = onAuthFailed;
+
+  const updateStatus = useCallback((next: ConnectionStatus) => {
+    statusRef.current = next;
+    setStatus(next);
+  }, []);
 
   const cleanup = useCallback(() => {
     if (heartbeatTimer.current) {
@@ -36,62 +47,106 @@ export function useWebSocket(
     }
   }, []);
 
+  const isConnectionStale = useCallback(() => {
+    if (!lastActivityAt.current) return false;
+    return Date.now() - lastActivityAt.current > STALE_CONNECTION_THRESHOLD;
+  }, []);
+
   const startHeartbeat = useCallback((ws: WebSocket) => {
     if (heartbeatTimer.current) clearInterval(heartbeatTimer.current);
     heartbeatTimer.current = setInterval(() => {
-      if (ws.readyState === WebSocket.OPEN) {
-        ws.send(JSON.stringify({ type: "ping" }));
+      if (ws.readyState !== WebSocket.OPEN) {
+        return;
       }
-    }, HEARTBEAT_INTERVAL);
-  }, []);
 
-  const sendRaw = useCallback((msg: ClientMessage) => {
-    if (wsRef.current?.readyState === WebSocket.OPEN) {
-      wsRef.current.send(JSON.stringify(msg));
+      if (!document.hidden && statusRef.current === "authenticated" && isConnectionStale()) {
+        reconnectAttempts.current = 0;
+        ws.close();
+        return;
+      }
+
+      ws.send(JSON.stringify({ type: "ping" }));
+    }, HEARTBEAT_INTERVAL);
+  }, [isConnectionStale]);
+
+  const flushPendingMessages = useCallback((ws: WebSocket) => {
+    if (ws.readyState !== WebSocket.OPEN) return;
+    if (pendingMessagesRef.current.length === 0) return;
+
+    const queued = [...pendingMessagesRef.current];
+    pendingMessagesRef.current = [];
+
+    for (const msg of queued) {
+      ws.send(JSON.stringify(msg));
     }
   }, []);
 
   const connect = useCallback(() => {
     if (!token) return;
 
+    const previousWs = wsRef.current;
+    if (
+      previousWs &&
+      (previousWs.readyState === WebSocket.OPEN
+        || previousWs.readyState === WebSocket.CONNECTING)
+    ) {
+      previousWs.close();
+    }
+
     cleanup();
-    setStatus("connecting");
+    updateStatus("connecting");
 
     const protocol = location.protocol === "https:" ? "wss:" : "ws:";
     const ws = new WebSocket(`${protocol}//${location.host}/ws`);
     wsRef.current = ws;
 
     ws.onopen = () => {
-      setStatus("connected");
+      if (wsRef.current !== ws) {
+        ws.close();
+        return;
+      }
+
+      updateStatus("connected");
       reconnectAttempts.current = 0;
-      // 发送认证
+      lastActivityAt.current = Date.now();
       ws.send(JSON.stringify({ type: "auth", token }));
-      // 启动心跳
       startHeartbeat(ws);
     };
 
     ws.onmessage = (event) => {
+      if (wsRef.current !== ws) return;
+
       try {
         const msg = JSON.parse(event.data) as ServerMessage;
+        lastActivityAt.current = Date.now();
+
         if (msg.type === "auth_result") {
           if (msg.payload.success) {
-            setStatus("authenticated");
+            updateStatus("authenticated");
+            flushPendingMessages(ws);
           } else {
-            // 认证失败：阻止重连并通知上层清除无效 token
+            pendingMessagesRef.current = [];
             reconnectAttempts.current = MAX_RECONNECT_ATTEMPTS;
             ws.close();
             onAuthFailedRef.current?.();
             return;
           }
         }
+
         onMessageRef.current(msg);
       } catch {}
     };
 
     ws.onclose = () => {
-      setStatus("disconnected");
+      if (wsRef.current === ws) {
+        wsRef.current = null;
+      } else {
+        return;
+      }
+
+      updateStatus("disconnected");
       cleanup();
-      // 自动重连
+
       if (reconnectAttempts.current < MAX_RECONNECT_ATTEMPTS) {
         const delay = Math.min(
           1000 * Math.pow(2, reconnectAttempts.current),
@@ -105,15 +160,44 @@ export function useWebSocket(
     ws.onerror = () => {
       // onclose 会被调用，这里不需要额外处理
     };
-  }, [token, cleanup, startHeartbeat]);
+  }, [cleanup, flushPendingMessages, startHeartbeat, token, updateStatus]);
+
+  const sendRaw = useCallback((msg: ClientMessage) => {
+    const ws = wsRef.current;
+
+    if (
+      ws?.readyState === WebSocket.OPEN &&
+      statusRef.current === "authenticated" &&
+      !isConnectionStale()
+    ) {
+      ws.send(JSON.stringify(msg));
+      return;
+    }
+
+    pendingMessagesRef.current.push(msg);
+    reconnectAttempts.current = 0;
+
+    if (
+      ws &&
+      (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)
+    ) {
+      ws.close();
+      return;
+    }
+
+    connect();
+  }, [connect, isConnectionStale]);
 
   const disconnect = useCallback(() => {
     cleanup();
     reconnectAttempts.current = MAX_RECONNECT_ATTEMPTS; // 阻止重连
+    pendingMessagesRef.current = [];
+    lastActivityAt.current = 0;
+    hiddenAt.current = null;
     wsRef.current?.close();
     wsRef.current = null;
-    setStatus("disconnected");
-  }, [cleanup]);
+    updateStatus("disconnected");
+  }, [cleanup, updateStatus]);
 
   const sendChat = useCallback(
     (
@@ -152,8 +236,15 @@ export function useWebSocket(
     [sendRaw]
   );
 
-  const requestCapabilities = useCallback((cwd?: string) => {
-    sendRaw({ type: "request_capabilities", payload: cwd ? { cwd } : undefined });
+  const requestCapabilities = useCallback((cwd?: string, sessionId?: string) => {
+    const payload = {
+      ...(cwd ? { cwd } : {}),
+      ...(sessionId ? { sessionId } : {}),
+    };
+    sendRaw({
+      type: "request_capabilities",
+      payload: Object.keys(payload).length > 0 ? payload : undefined,
+    });
   }, [sendRaw]);
 
   const interrupt = useCallback(() => {
@@ -165,34 +256,54 @@ export function useWebSocket(
   }, [sendRaw]);
 
   const sendPermissionResponse = useCallback(
-    (requestId: string, behavior: "allow" | "deny") => {
-      sendRaw({ type: "permission_response", payload: { requestId, behavior } });
+    (requestId: string, behavior: "allow" | "deny", sessionId?: string) => {
+      sendRaw({ type: "permission_response", payload: { requestId, behavior, sessionId } });
     },
     [sendRaw]
   );
 
-  // 页面可见性变化时暂停/恢复心跳，避免后台耗电
+  const reattachSession = useCallback((sessionId: string) => {
+    sendRaw({ type: "reattach", payload: { sessionId } });
+  }, [sendRaw]);
+
+  // 手机后台恢复时优先判断连接是否已陈旧，必要时主动重连。
   useEffect(() => {
     const handleVisibility = () => {
       const ws = wsRef.current;
       if (document.hidden) {
-        // 页面进入后台：暂停心跳
-        if (heartbeatTimer.current) {
-          clearInterval(heartbeatTimer.current);
-          heartbeatTimer.current = undefined;
-        }
-      } else if (ws?.readyState === WebSocket.OPEN) {
-        // 页面回到前台且连接正常：恢复心跳
-        startHeartbeat(ws);
-      } else if (token && (!ws || ws.readyState === WebSocket.CLOSED)) {
-        // 页面回到前台但连接已断开：重连
+        hiddenAt.current = Date.now();
+        return;
+      }
+
+      const hiddenDuration = hiddenAt.current
+        ? Date.now() - hiddenAt.current
+        : 0;
+      hiddenAt.current = null;
+
+      if (!token) return;
+
+      if (!ws || ws.readyState === WebSocket.CLOSED) {
         reconnectAttempts.current = 0;
         connect();
+        return;
+      }
+
+      if (ws.readyState === WebSocket.OPEN) {
+        if (
+          hiddenDuration >= BACKGROUND_RECONNECT_THRESHOLD ||
+          isConnectionStale()
+        ) {
+          reconnectAttempts.current = 0;
+          ws.close();
+          return;
+        }
+
+        startHeartbeat(ws);
       }
     };
     document.addEventListener("visibilitychange", handleVisibility);
     return () => document.removeEventListener("visibilitychange", handleVisibility);
-  }, [token, startHeartbeat, connect]);
+  }, [token, startHeartbeat, connect, isConnectionStale]);
 
   // token 变化时重新连接
   useEffect(() => {
@@ -214,6 +325,7 @@ export function useWebSocket(
     setPermissionMode,
     requestCapabilities,
     sendPermissionResponse,
+    reattachSession,
     sendRaw,
   };
 }

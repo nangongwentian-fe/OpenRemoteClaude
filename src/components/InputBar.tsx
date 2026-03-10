@@ -300,9 +300,9 @@ export function InputBar({
 
           {/* Footer: toolbar */}
           <TooltipProvider>
-            <div className="flex items-center justify-between px-2 py-1.5 gap-1">
+            <div className="flex flex-wrap items-end gap-2 px-2 py-1.5">
               {/* 左侧：设置 chips */}
-              <div className="flex items-center gap-1 overflow-x-auto scrollbar-none min-w-0">
+              <div className="flex min-w-0 basis-full flex-wrap items-center gap-1 sm:flex-1 sm:basis-auto sm:flex-nowrap sm:overflow-x-auto sm:scrollbar-none">
                 <ModelChip
                   currentModel={currentModel}
                   models={models}
@@ -327,7 +327,7 @@ export function InputBar({
               </div>
 
               {/* 右侧：操作按钮 */}
-              <div className="flex items-center gap-1 shrink-0">
+              <div className="flex w-full items-center justify-end gap-1 shrink-0 sm:w-auto">
                 <AttachmentButton
                   onAddAttachments={onAddAttachments}
                   disabled={disabled}
