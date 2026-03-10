@@ -1,12 +1,13 @@
 import { useState, useCallback } from "react";
 import type { Attachment, AttachmentInfo } from "../types/messages";
+import { createId } from "@/lib/id";
 
 export function useAttachments() {
   const [attachments, setAttachments] = useState<Attachment[]>([]);
 
   const addAttachments = useCallback((files: FileList) => {
     const newAttachments: Attachment[] = Array.from(files).map((file) => ({
-      id: crypto.randomUUID(),
+      id: createId(),
       file,
       name: file.name,
       type: file.type,

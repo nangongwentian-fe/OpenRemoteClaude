@@ -10,11 +10,13 @@ import { createThreadRoutes } from "./threads";
 import { createUploadRoutes } from "./upload";
 import { createProjectRoutes } from "./projects";
 import { launchTunnel, getTunnelInfo, stopTunnel } from "./tunnel";
+import { detectTailscale, getTailscaleInfo } from "./tailscale";
 
 import { existsSync } from "node:fs";
 
 const PORT = parseInt(process.env.PORT || "3456");
 const ENABLE_TUNNEL = process.env.NO_TUNNEL !== "1";
+const ENABLE_TAILSCALE = process.env.NO_TAILSCALE !== "1";
 const VITE_PORT = 5173;
 const IS_DEV = !existsSync("./dist/client/index.html");
 
@@ -40,7 +42,10 @@ app.use("*", cors());
 // 认证路由（公开）
 app.route("/api/auth", createAuthRoutes(db, JWT_SECRET));
 
-// 隧道信息
+// 网络信息
+app.get("/api/network", (c) =>
+  c.json({ tunnel: getTunnelInfo(), tailscale: getTailscaleInfo() })
+);
 app.get("/api/tunnel", (c) => c.json(getTunnelInfo()));
 
 // Thread 管理路由（需要 JWT）
@@ -90,30 +95,58 @@ const server = Bun.serve({
 
 console.log(`[Server] Running at http://localhost:${server.port}`);
 
-// 启动 Cloudflare Tunnel
-if (ENABLE_TUNNEL) {
-  // dev 模式下指向 Vite 端口（Vite 已配置 proxy 转发 /api 和 /ws）
-  const tunnelPort = IS_DEV ? VITE_PORT : PORT;
-  launchTunnel(tunnelPort)
-    .then((url) => {
-      console.log(`\n========================================`);
-      console.log(`  Remote access: ${url}`);
-      console.log(`  Open this URL on your phone!`);
-      console.log(`========================================\n`);
-    })
-    .catch((err) => {
-      console.warn(
-        `[Tunnel] Failed to start: ${err.message}`
-      );
-      console.warn(
-        "[Tunnel] You can still access locally at http://localhost:" +
-          server.port
-      );
-      console.warn(
-        "[Tunnel] Set NO_TUNNEL=1 to disable tunnel on startup"
-      );
-    });
+// 并行启动网络服务
+const networkTasks: Promise<void>[] = [];
+
+if (ENABLE_TAILSCALE) {
+  networkTasks.push(
+    detectTailscale(server.port)
+      .then((info) => {
+        if (info.isAvailable) {
+          console.log(`[Tailscale] Detected: ${info.ip}${info.hostname ? ` (${info.hostname})` : ""}`);
+        } else {
+          console.log("[Tailscale] Not available");
+        }
+      })
+      .catch(() => {})
+  );
 }
+
+if (ENABLE_TUNNEL) {
+  const tunnelPort = IS_DEV ? VITE_PORT : PORT;
+  networkTasks.push(
+    launchTunnel(tunnelPort)
+      .then(() => {})
+      .catch((err) => {
+        console.warn(`[Tunnel] Failed: ${err.message}`);
+      })
+  );
+}
+
+// 全部完成后打印统一横幅
+Promise.allSettled(networkTasks).then(() => {
+  const lines: string[] = [];
+  lines.push(`  Local:      http://localhost:${server.port}`);
+
+  const ts = getTailscaleInfo();
+  if (ts.isAvailable) {
+    lines.push(`  Tailscale:  ${ts.url}`);
+  }
+
+  const tn = getTunnelInfo();
+  if (tn.isRunning && tn.url) {
+    lines.push(`  Tunnel:     ${tn.url}`);
+  }
+
+  const width = 42;
+  console.log(`\n${"=".repeat(width)}`);
+  console.log("  Remote Claude Code");
+  console.log(`${"-".repeat(width)}`);
+  for (const line of lines) console.log(line);
+  console.log(`${"-".repeat(width)}`);
+  console.log("  Open any URL above on your phone!");
+  console.log(`${"=".repeat(width)}\n`);
+});
 
 // 优雅关闭
 process.on("SIGINT", () => {

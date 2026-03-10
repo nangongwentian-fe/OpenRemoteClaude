@@ -5,6 +5,7 @@ import type {
   ServerMessage,
   AttachmentInfo,
 } from "../types/messages";
+import { createId } from "@/lib/id";
 
 export function useMessages() {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
@@ -29,7 +30,7 @@ export function useMessages() {
 
   const addUserMessage = useCallback((prompt: string, attachments?: AttachmentInfo[]) => {
     const msg: ChatMessage = {
-      id: crypto.randomUUID(),
+      id: createId(),
       role: "user",
       blocks: [{ type: "text", text: prompt }],
       timestamp: Date.now(),
@@ -45,7 +46,7 @@ export function useMessages() {
         streamingRef.current = { blocks: [], toolInputs: new Map() };
         // 创建一个空的 assistant 消息占位
         const placeholder: ChatMessage = {
-          id: crypto.randomUUID(),
+          id: createId(),
           role: "assistant",
           blocks: [],
           timestamp: Date.now(),
@@ -191,7 +192,7 @@ export function useMessages() {
               };
             } else {
               updated.push({
-                id: crypto.randomUUID(),
+                id: createId(),
                 role: "assistant",
                 blocks,
                 timestamp: Date.now(),
@@ -258,7 +259,7 @@ export function useMessages() {
             }
           }
           updated.push({
-            id: crypto.randomUUID(),
+            id: createId(),
             role: "assistant",
             blocks: [{ type: "text", text: `Error: ${msg.payload.message}` }],
             timestamp: Date.now(),
@@ -314,7 +315,7 @@ export function useMessages() {
           return [
             ...prev,
             {
-              id: crypto.randomUUID(),
+              id: createId(),
               role: "assistant" as const,
               blocks: filteredBlocks,
               timestamp: Date.now(),

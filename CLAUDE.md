@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-Remote Claude Code — a self-hosted tool to remotely control Claude Code from your phone via Cloudflare Tunnel + PWA. Bun runtime, Hono backend, React 19 frontend.
+Remote Claude Code — a self-hosted tool to remotely control Claude Code from your phone via Cloudflare Tunnel / Tailscale + PWA. Bun runtime, Hono backend, React 19 frontend.
 
 ## Commands
 
@@ -41,6 +41,7 @@ No test framework or linter is configured.
 - `db.ts` — `DataStore` class wrapping Bun's built-in SQLite (`~/.remote-claude-code/data.db`), WAL mode. Tables: `config`, `sessions`, `messages`
 - `threads.ts` — Thread listing/history API routes
 - `tunnel.ts` — Cloudflare Quick Tunnel via `cloudflared` npm package
+- `tailscale.ts` — Tailscale IP detection (auto-detects Tailscale availability and IP)
 
 **Frontend** (`src/`): React 19 SPA built with Vite.
 
@@ -81,3 +82,4 @@ Auth flow: connect → server sends `needsAuth: true` → client sends JWT via `
 - `PORT` — Server port (default: 3456)
 - `RCC_JWT_SECRET` — JWT signing key (default: random UUID per restart)
 - `NO_TUNNEL=1` — Disable Cloudflare Tunnel
+- `NO_TAILSCALE=1` — Disable Tailscale IP detection
