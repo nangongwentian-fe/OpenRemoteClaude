@@ -1,4 +1,4 @@
-import { useState, useCallback } from "react";
+import { useState, useCallback, useEffect, useRef } from "react";
 import {
   PanelRight,
   PanelRightClose,
@@ -51,14 +51,37 @@ export function FileExplorer({
 }: Props) {
   const fileTree = useFileTree(token);
   const fileViewer = useFileViewer(token);
-  const { width, handleMouseDown } = useResizablePanel({
+  const [view, setView] = useState<"tree" | "file">("tree");
+
+  const isFileView = view === "file";
+  const fileViewMaxWidth = typeof window !== "undefined"
+    ? Math.round(window.innerWidth * 0.8)
+    : 1200;
+
+  const { width, setWidth, handleMouseDown } = useResizablePanel({
     storageKey: "rcc_explorer_width",
     defaultWidth: 320,
-    minWidth: 240,
-    maxWidth: 500,
+    minWidth: isFileView ? 400 : 240,
+    maxWidth: isFileView ? fileViewMaxWidth : 500,
     side: "right",
   });
-  const [view, setView] = useState<"tree" | "file">("tree");
+
+  const treeWidthRef = useRef(width);
+  const [isTransitioning, setIsTransitioning] = useState(false);
+
+  useEffect(() => {
+    if (view === "file") {
+      treeWidthRef.current = width;
+      setIsTransitioning(true);
+      const targetWidth = Math.max(500, Math.round(window.innerWidth * 0.7));
+      setWidth(targetWidth);
+    } else {
+      setIsTransitioning(true);
+      setWidth(treeWidthRef.current);
+    }
+    // Only react to view changes, not width
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [view]);
   const [createMode, setCreateMode] = useState<CreateMode>(null);
   const [createName, setCreateName] = useState("");
   const [createParent, setCreateParent] = useState<string | null>(null);
@@ -238,6 +261,7 @@ export function FileExplorer({
           file={fileViewer.currentFile!}
           loading={fileViewer.loading}
           error={fileViewer.error}
+          isEffectivelyPinned={isEffectivelyPinned}
           onBack={handleBackToTree}
           onAddFileReference={handleAddFileReference}
           onAddSnippetReference={handleAddSnippetReference}
@@ -251,7 +275,11 @@ export function FileExplorer({
     return (
       <aside
         className="shrink-0 h-full bg-card border-l border-(--color-overlay-border) flex flex-col overflow-hidden relative"
-        style={{ width }}
+        style={{
+          width,
+          transition: isTransitioning ? "width 300ms ease" : undefined,
+        }}
+        onTransitionEnd={() => setIsTransitioning(false)}
       >
         <div
           className="absolute top-0 bottom-0 left-0 w-1.5 cursor-col-resize z-20 hover:bg-primary/20 active:bg-primary/30 transition-colors"
@@ -265,7 +293,10 @@ export function FileExplorer({
   // Sheet mode
   return (
     <Sheet open={sheetOpen} onOpenChange={onSheetOpenChange}>
-      <SheetContent side="right" className="w-[320px] p-0 bg-card border-l border-(--color-overlay-border)">
+      <SheetContent side="right" className={cn(
+        "p-0 bg-card border-l border-(--color-overlay-border)",
+        view === "file" ? "w-[90vw] max-w-none" : "w-[320px]"
+      )}>
         <SheetHeader className="sr-only">
           <SheetTitle>File Explorer</SheetTitle>
         </SheetHeader>

@@ -11,6 +11,7 @@ interface Props {
   file: FileContent;
   loading: boolean;
   error: string | null;
+  isEffectivelyPinned: boolean;
   onBack: () => void;
   onAddFileReference: (path: string, name: string) => void;
   onAddSnippetReference: (path: string, name: string, startLine: number, endLine: number, content: string) => void;
@@ -20,6 +21,7 @@ export function FileViewer({
   file,
   loading,
   error,
+  isEffectivelyPinned,
   onBack,
   onAddFileReference,
   onAddSnippetReference,
@@ -57,7 +59,10 @@ export function FileViewer({
   return (
     <div className="flex flex-col h-full">
       {/* Header */}
-      <div className="flex items-center gap-2 border-b border-(--color-overlay-border) py-2 pl-3 pr-12 shrink-0 sm:pr-3">
+      <div className={cn(
+        "flex items-center gap-2 border-b border-(--color-overlay-border) py-2 pl-3 shrink-0",
+        isEffectivelyPinned ? "pr-3" : "pr-12"
+      )}>
         <Button
           variant="ghost"
           size="icon"

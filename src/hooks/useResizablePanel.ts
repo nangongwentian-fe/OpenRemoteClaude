@@ -25,6 +25,11 @@ export function useResizablePanel({
   const widthRef = useRef(width);
   widthRef.current = width;
 
+  const minRef = useRef(minWidth);
+  minRef.current = minWidth;
+  const maxRef = useRef(maxWidth);
+  maxRef.current = maxWidth;
+
   const handleMouseDown = useCallback(
     (e: React.MouseEvent) => {
       e.preventDefault();
@@ -38,8 +43,8 @@ export function useResizablePanel({
         const delta =
           side === "left" ? e.clientX - startX : startX - e.clientX;
         const newWidth = Math.max(
-          minWidth,
-          Math.min(maxWidth, startWidth + delta)
+          minRef.current,
+          Math.min(maxRef.current, startWidth + delta)
         );
         setWidth(newWidth);
       };
@@ -55,8 +60,8 @@ export function useResizablePanel({
       document.addEventListener("mousemove", handleMouseMove);
       document.addEventListener("mouseup", handleMouseUp);
     },
-    [side, minWidth, maxWidth, storageKey]
+    [side, storageKey]
   );
 
-  return { width, handleMouseDown };
+  return { width, setWidth, handleMouseDown };
 }

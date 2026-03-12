@@ -1,7 +1,7 @@
 import { Hono } from "hono";
 import { jwt } from "hono/jwt";
 import { readdirSync, statSync, existsSync, mkdirSync, rmSync, readFileSync, writeFileSync, unlinkSync } from "node:fs";
-import { join, dirname, basename, resolve, extname } from "node:path";
+import { join, dirname, basename, resolve, extname, sep } from "node:path";
 import type { DataStore } from "./db";
 
 const HIDDEN_DIRS = new Set([
@@ -54,7 +54,7 @@ function isBinary(buffer: Buffer): boolean {
 }
 
 function isWithinProject(absPath: string, projects: Array<{ path: string }>): boolean {
-  return projects.some((p) => absPath === p.path || absPath.startsWith(p.path + "/"));
+  return projects.some((p) => absPath === p.path || absPath.startsWith(p.path + sep));
 }
 
 export function createProjectRoutes(db: DataStore, jwtSecret: string) {
@@ -198,17 +198,17 @@ export function createProjectRoutes(db: DataStore, jwtSecret: string) {
     }> = [];
 
     try {
-      const items = readdirSync(absPath);
-      for (const name of items) {
+      const items = readdirSync(absPath, { withFileTypes: true });
+      for (const dirent of items) {
+        const name = dirent.name;
         if (HIDDEN_DIRS.has(name) || HIDDEN_FILES.has(name)) continue;
         if (name.startsWith(".")) continue;
         try {
-          const fullPath = join(absPath, name);
-          const s = statSync(fullPath);
-          if (s.isDirectory()) {
+          if (dirent.isDirectory()) {
             entries.push({ name, isDirectory: true, size: 0, extension: "" });
-          } else if (s.isFile()) {
+          } else if (dirent.isFile()) {
             const ext = extname(name).slice(1).toLowerCase();
+            const s = statSync(join(absPath, name));
             entries.push({ name, isDirectory: false, size: s.size, extension: ext });
           }
         } catch {
