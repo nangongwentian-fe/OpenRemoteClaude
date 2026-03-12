@@ -1,0 +1,8 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(grep -n \"import.*crypto\" /e/Code/Personal/OpenRemoteClaude/server/*.ts)",
+      "Bash(git status:*)"
+    ]
+  }
+}
