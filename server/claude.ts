@@ -45,18 +45,51 @@ function summarizeStderr(stderrLines: string[]) {
   return preferred || cleaned[cleaned.length - 1];
 }
 
+function getExitCodeAdvice(code: number): string {
+  switch (code) {
+    case 1:
+      return "可能原因：CLI 未正确安装、未登录或配置异常。请执行 `claude doctor` 检查，或运行 `claude --version` 确认 CLI 可用。";
+    case 2:
+      return "命令行参数错误。请检查 Claude Code CLI 版本是否与 SDK 兼容。";
+    case 126:
+      return "权限不足，无法执行 claude 命令。请检查文件权限。";
+    case 127:
+      return "未找到 claude 命令。请确认已安装 Claude Code CLI 并在 PATH 中。";
+    default:
+      return "请执行 `claude doctor` 检查 Claude Code 安装、登录和配置。";
+  }
+}
+
+function getStderrAdvice(stderr: string): string | null {
+  if (/unauthorized|auth|login|token/i.test(stderr)) {
+    return "请检查是否已登录 Claude Code：运行 `claude login`";
+  }
+  if (/ECONNREFUSED|network|timeout|fetch failed/i.test(stderr)) {
+    return "网络连接异常，请检查网络连接和代理设置";
+  }
+  if (/unknown option|invalid.*flag/i.test(stderr)) {
+    return "CLI 参数不兼容，请更新 Claude Code CLI 到最新版本：`claude update`";
+  }
+  return null;
+}
+
 function enrichProcessExitError(err: unknown, stderrLines: string[]) {
   const base = err instanceof Error ? err : new Error(String(err));
-  if (!/Claude Code process exited with code \d+/i.test(base.message)) {
+  const match = base.message.match(/Claude Code process exited with code (\d+)/i);
+  if (!match) {
     return base;
   }
 
+  const exitCode = parseInt(match[1], 10);
   const stderrSummary = summarizeStderr(stderrLines);
-  if (!stderrSummary) {
-    return new Error(`${base.message}。请执行 \`claude doctor\` 检查 Claude Code 安装、登录和配置。`);
+
+  if (stderrSummary) {
+    const advice = getStderrAdvice(stderrSummary);
+    const suffix = advice ? `\n建议：${advice}` : "";
+    return new Error(`${base.message}: ${stderrSummary}${suffix}`);
   }
 
-  return new Error(`${base.message}: ${stderrSummary}`);
+  return new Error(`${base.message}。${getExitCodeAdvice(exitCode)}`);
 }
 
 function stripQuotes(value: string) {
@@ -208,6 +241,28 @@ function applyCommandArguments(body: string, args: string) {
   return expanded;
 }
 
+/** 跨平台终止子进程（Windows 使用 taskkill，Unix 使用 SIGTERM/SIGKILL） */
+function killChild(child: import("node:child_process").ChildProcess): void {
+  if (process.platform === "win32") {
+    if (child.pid) {
+      try {
+        Bun.spawn(["taskkill", "/PID", String(child.pid), "/T", "/F"], {
+          stdin: "ignore",
+          stdout: "ignore",
+          stderr: "ignore",
+        });
+      } catch {
+        child.kill();
+      }
+    }
+  } else {
+    child.kill("SIGTERM");
+    setTimeout(() => {
+      try { child.kill("SIGKILL"); } catch {}
+    }, 2_000);
+  }
+}
+
 function runShellCommand(command: string, cwd: string) {
   return new Promise<string>((resolveCommand) => {
     const child = spawn(command, {
@@ -249,11 +304,7 @@ function runShellCommand(command: string, cwd: string) {
 
     setTimeout(() => {
       if (!settled) {
-        child.kill("SIGTERM");
-        // SIGKILL 兜底：如果进程忽略 SIGTERM，2 秒后强杀
-        setTimeout(() => {
-          if (!settled) child.kill("SIGKILL");
-        }, 2_000);
+        killChild(child);
         finish("Command timed out after 10s");
       }
     }, 10_000);
@@ -327,6 +378,7 @@ export class ClaudeSessionManager {
   private cleanupTimer: ReturnType<typeof setInterval>;
   private probeCache = new Map<string, { data: { models: unknown[]; commands: unknown[]; mcpServers: unknown[] }; timestamp: number }>();
   private slashCommandCache = new Map<string, { commands: LocalSlashCommand[]; timestamp: number }>();
+  private healthCache: { available: boolean; version?: string; error?: string; timestamp: number } | null = null;
 
   constructor() {
     this.cleanupTimer = setInterval(() => {
@@ -345,6 +397,41 @@ export class ClaudeSessionManager {
         this.sessions.delete(id);
         console.log(`[Session] Cleaned up expired session ${id}`);
       }
+    }
+  }
+
+  /** 检查 Claude CLI 是否可用，结果缓存 5 分钟，失败缓存 60 秒 */
+  async checkClaudeHealth(): Promise<{ available: boolean; version?: string; error?: string }> {
+    if (this.healthCache && Date.now() - this.healthCache.timestamp < PROBE_CACHE_TTL_MS) {
+      return this.healthCache;
+    }
+
+    try {
+      const proc = Bun.spawn(["claude", "--version"], {
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const timer = setTimeout(() => proc.kill(), 5_000);
+      const output = await new Response(proc.stdout).text();
+      clearTimeout(timer);
+      const code = await proc.exited;
+
+      if (code === 0) {
+        const result = { available: true, version: output.trim() };
+        this.healthCache = { ...result, timestamp: Date.now() };
+        return result;
+      }
+
+      const stderrText = await new Response(proc.stderr).text();
+      const result = { available: false, error: stderrText.trim() || `claude --version exited with code ${code}` };
+      // 失败时缓存 60 秒，避免每次请求都卡住
+      this.healthCache = { ...result, timestamp: Date.now() - PROBE_CACHE_TTL_MS + 60_000 };
+      return result;
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      const result = { available: false, error: msg };
+      this.healthCache = { ...result, timestamp: Date.now() - PROBE_CACHE_TTL_MS + 60_000 };
+      return result;
     }
   }
 
@@ -395,6 +482,16 @@ export class ClaudeSessionManager {
     if (existingSession?.isActive) {
       throw new Error(`Session ${sessionId} is already active`);
     }
+
+    // CLI 预检：确认 claude 命令可用
+    const health = await this.checkClaudeHealth();
+    if (!health.available) {
+      throw new Error(
+        `Claude Code CLI 不可用：${health.error || "未知错误"}。` +
+        `请确认已安装 Claude Code CLI 并且 \`claude\` 命令在 PATH 中可用。`
+      );
+    }
+
     const abortController = new AbortController();
 
     const session: SessionInfo = {

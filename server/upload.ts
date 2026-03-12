@@ -3,9 +3,10 @@ import { verify } from "hono/jwt";
 import { join } from "path";
 import { mkdir, readdir, unlink, stat } from "fs/promises";
 import { existsSync } from "fs";
+import { homedir } from "node:os";
 
 const UPLOAD_DIR = join(
-  process.env.HOME || process.env.USERPROFILE || ".",
+  homedir(),
   ".remote-claude-code",
   "uploads"
 );

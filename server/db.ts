@@ -1,9 +1,10 @@
 import { Database, type Statement } from "bun:sqlite";
 import { join } from "node:path";
 import { mkdirSync } from "node:fs";
+import { homedir } from "node:os";
 
 const DATA_DIR = join(
-  process.env.HOME || "~",
+  homedir(),
   ".remote-claude-code"
 );
 

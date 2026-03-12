@@ -1,8 +1,19 @@
 import { Hono } from "hono";
 import { jwt } from "hono/jwt";
 import { readdirSync, statSync, existsSync, mkdirSync, rmSync, readFileSync, writeFileSync, unlinkSync } from "node:fs";
-import { join, dirname, basename, resolve, extname, sep } from "node:path";
+import { join, dirname, basename, resolve, extname, sep, parse } from "node:path";
+import { homedir } from "node:os";
 import type { DataStore } from "./db";
+
+/** 跨平台检查是否为根目录（Unix: "/", Windows: "C:\" 等） */
+function isRootPath(absPath: string): boolean {
+  return parse(absPath).root === absPath;
+}
+
+/** 根目录或用户主目录均为受保护路径 */
+function isProtectedPath(absPath: string): boolean {
+  return isRootPath(absPath) || absPath === homedir();
+}
 
 const HIDDEN_DIRS = new Set([
   "node_modules",
@@ -144,7 +155,7 @@ export function createProjectRoutes(db: DataStore, jwtSecret: string) {
       return c.json({ error: "Path does not exist or is not a directory" }, 400);
     }
 
-    if (absPath === "/" || absPath === process.env.HOME) {
+    if (isProtectedPath(absPath)) {
       return c.json({ error: "Cannot delete protected directory" }, 403);
     }
 
@@ -225,7 +236,7 @@ export function createProjectRoutes(db: DataStore, jwtSecret: string) {
       return a.name.localeCompare(b.name);
     });
 
-    const parent = absPath === "/" ? null : dirname(absPath);
+    const parent = isRootPath(absPath) ? null : dirname(absPath);
     return c.json({ current: absPath, parent, entries });
   });
 
@@ -338,7 +349,7 @@ export function createProjectRoutes(db: DataStore, jwtSecret: string) {
 
   // GET /api/projects/browse?path=/Users — 目录浏览
   app.get("/browse", (c) => {
-    const rawPath = c.req.query("path") || process.env.HOME || "/";
+    const rawPath = c.req.query("path") || homedir();
     const absPath = resolve(rawPath);
 
     if (!existsSync(absPath)) {
@@ -381,7 +392,7 @@ export function createProjectRoutes(db: DataStore, jwtSecret: string) {
       return a.name.localeCompare(b.name);
     });
 
-    const parent = absPath === "/" ? null : dirname(absPath);
+    const parent = isRootPath(absPath) ? null : dirname(absPath);
 
     return c.json({ current: absPath, parent, entries });
   });
