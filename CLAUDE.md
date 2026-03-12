@@ -67,6 +67,7 @@ Auth flow: connect → server sends `needsAuth: true` → client sends JWT via `
 
 ## Key Conventions
 
+- **Cross-platform compatibility**: All newly added features must be designed and implemented to run on macOS, Linux, and Windows. Avoid OS-specific commands, path handling, process management, and shell assumptions unless equivalent cross-platform handling is provided.
 - **Runtime**: Always use Bun (not Node). `Bun.password`, `Bun.serve`, built-in SQLite
 - **Tailwind v4**: Uses `@import "tailwindcss"` + `@theme inline` syntax (not `@tailwind` directives). Theme defined in `src/styles/globals.css`
 - **Theme**: Claude/Anthropic brand colors. Light/dark dual theme with `useTheme` hook. Primary accent: terra cotta `#d97757`. Light bg: `#faf9f5`, dark bg: `#1a1915`. CSS variables in `globals.css`, `.dark` class on `<html>` for dark mode. Theme preference stored in localStorage as `rcc_theme`

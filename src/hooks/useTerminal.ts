@@ -1,5 +1,6 @@
 import { useState, useCallback, useRef } from "react";
 import type { ClientMessage, TerminalListItem } from "../types/messages";
+import { createId } from "../lib/id";
 
 interface TerminalState {
   id: string;
@@ -29,7 +30,7 @@ export function useTerminal(sendRaw: SendFn) {
 
   const createTerminal = useCallback(
     (cwd?: string, cols?: number, rows?: number) => {
-      const id = crypto.randomUUID();
+      const id = createId();
       sendRaw({
         type: "terminal_create",
         payload: { id, cwd, cols, rows },

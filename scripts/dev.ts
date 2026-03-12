@@ -12,24 +12,50 @@ const children = [
 ];
 
 let shuttingDown = false;
+let stopPromise: Promise<void> | null = null;
+
+async function terminateChild(child: (typeof children)[number]) {
+  if (child.exitCode !== null) return;
+
+  try {
+    if (process.platform === "win32") {
+      const killer = Bun.spawn([
+        "taskkill",
+        "/PID",
+        String(child.pid),
+        "/T",
+        "/F",
+      ], {
+        stdin: "ignore",
+        stdout: "ignore",
+        stderr: "ignore",
+      });
+
+      await killer.exited;
+      return;
+    }
+
+    child.kill("SIGTERM");
+  } catch {
+    // Ignore child shutdown race.
+  }
+}
 
 function stopChildren() {
-  for (const child of children) {
-    if (child.exitCode === null) {
-      try {
-        child.kill("SIGTERM");
-      } catch {
-        // Ignore child shutdown race.
-      }
-    }
-  }
+  if (stopPromise) return stopPromise;
+
+  stopPromise = Promise.allSettled(children.map((child) => terminateChild(child))).then(
+    () => {}
+  );
+
+  return stopPromise;
 }
 
 function shutdown(signal: string) {
   if (shuttingDown) return;
   shuttingDown = true;
   console.log(`[dev] Received ${signal}, shutting down...`);
-  stopChildren();
+  void stopChildren();
 }
 
 process.on("SIGINT", () => shutdown("SIGINT"));
@@ -42,8 +68,9 @@ const result = await Promise.race([
 
 if (!shuttingDown) {
   console.error(`[dev] ${result.name} exited with code ${result.code ?? 1}`);
-  stopChildren();
+  await stopChildren();
 }
 
+await stopChildren();
 await Promise.allSettled(children.map((child) => child.exited));
 process.exit(shuttingDown ? 0 : (result.code ?? 0));

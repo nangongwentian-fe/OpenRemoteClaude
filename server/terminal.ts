@@ -41,6 +41,7 @@ interface TerminalSession {
   onPortDetected: (port: number, url: string) => void;
   outputBuffer: string;
   flushTimer: ReturnType<typeof setTimeout> | null;
+  windowsPipeInputBuffer: string[];
 }
 
 const MAX_TERMINALS = 5;
@@ -104,6 +105,7 @@ export class TerminalManager {
       onPortDetected: options.onPortDetected,
       outputBuffer: "",
       flushTimer: null,
+      windowsPipeInputBuffer: [],
     };
 
     const spawned = this.spawnTerminal(session, options.shell);
@@ -269,7 +271,7 @@ export class TerminalManager {
               if (!proc.stdin || typeof proc.stdin === "number") {
                 throw new Error("Terminal stdin is not available");
               }
-              proc.stdin.write(this.normalizeWindowsPipeInput(data));
+              proc.stdin.write(this.prepareWindowsPipeInput(session, data));
               proc.stdin.flush();
             },
             resize: () => {
@@ -329,7 +331,10 @@ export class TerminalManager {
       }
     }
 
-    session.outputBuffer += text;
+    const renderedText =
+      process.platform === "win32" ? this.normalizeWindowsPipeOutput(text) : text;
+
+    session.outputBuffer += renderedText;
     if (!session.flushTimer) {
       session.flushTimer = setTimeout(() => {
         if (session.outputBuffer) {
@@ -341,10 +346,44 @@ export class TerminalManager {
     }
   }
 
-  private normalizeWindowsPipeInput(data: string): string {
+  private prepareWindowsPipeInput(session: TerminalSession, data: string): string {
     // xterm.js sends DEL (\x7f) for Backspace by default.
     // Windows shell stdin in pipe mode expects BS (\b) to edit the current line.
-    return data.replace(/\x7f/g, "\b");
+    const normalized = data.replace(/\x7f/g, "\b");
+    let result = "";
+
+    for (const char of Array.from(normalized)) {
+      if (char === "\b") {
+        if (session.windowsPipeInputBuffer.length === 0) continue;
+        session.windowsPipeInputBuffer.pop();
+        result += char;
+        continue;
+      }
+
+      if (char === "\r" || char === "\n" || char === "\x03") {
+        session.windowsPipeInputBuffer = [];
+        result += char;
+        continue;
+      }
+
+      const codePoint = char.codePointAt(0) ?? 0;
+      if (codePoint < 0x20 || codePoint === 0x7f) {
+        result += char;
+        continue;
+      }
+
+      session.windowsPipeInputBuffer.push(char);
+      result += char;
+    }
+
+    return result;
+  }
+
+  private normalizeWindowsPipeOutput(data: string): string {
+    // PowerShell in stdin/stdout pipe mode echoes bare BS (\b) on backspace.
+    // xterm.js moves the cursor left for BS but does not erase the previous glyph,
+    // so expand it to the classic erase sequence for correct visual behavior.
+    return data.replace(/\x08/g, "\b \b");
   }
 
   private handleTerminalExit(session: TerminalSession, code: number): void {
