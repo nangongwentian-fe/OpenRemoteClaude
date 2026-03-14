@@ -2,7 +2,12 @@
   "permissions": {
     "allow": [
       "Bash(grep -n \"import.*crypto\" /e/Code/Personal/OpenRemoteClaude/server/*.ts)",
-      "Bash(git status:*)"
+      "Bash(git status:*)",
+      "mcp__exa__web_search_exa",
+      "mcp__exa__get_code_context_exa",
+      "Bash(npm view:*)",
+      "Bash(cd \"E:/Code/Personal/OpenRemoteClaude\" && npm login 2>&1)",
+      "Bash(npm config:*)"
     ]
   }
 }

@@ -2,6 +2,21 @@
   "name": "remote-claude-code",
   "version": "0.1.0",
   "type": "module",
+  "description": "Self-hosted tool to remotely control Claude Code from your phone via Cloudflare Tunnel + PWA",
+  "keywords": ["claude", "claude-code", "remote", "anthropic", "ai", "cli"],
+  "license": "MIT",
+  "engines": {
+    "bun": ">=1.0.0"
+  },
+  "bin": {
+    "rcc": "cli/index.ts"
+  },
+  "files": [
+    "cli/",
+    "server/",
+    "dist/",
+    "public/"
+  ],
   "scripts": {
     "dev": "bun run scripts/dev.ts",
     "dev:server": "bun run --watch server/index.ts",
@@ -9,9 +24,11 @@
     "build": "bunx vite build",
     "start": "bun run server/index.ts",
     "postinstall": "node node_modules/cloudflared/lib/cloudflared.js install 2>/dev/null || true",
-    "setup": "bun install && bunx vite build"
+    "setup": "bun install && bunx vite build",
+    "prepublishOnly": "bun run build"
   },
   "dependencies": {
+    "citty": "^0.1.6",
     "@anthropic-ai/claude-agent-sdk": "^0.2.70",
     "@radix-ui/react-slot": "^1.2.4",
     "@streamdown/code": "^1.1.0",
